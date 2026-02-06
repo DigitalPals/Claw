@@ -1,0 +1,33 @@
+{
+  "id": "claw",
+  "name": "Claw",
+  "version": "0.1.0",
+  "minNoctaliaVersion": "3.6.0",
+  "author": "DigitalPals",
+  "license": "MIT",
+  "repository": "https://github.com/DigitalPals/Claw",
+  "description": "Menu bar chat panel for OpenClaw Gateway (OpenAI-compatible chat completions).",
+  "tags": ["Bar", "Panel", "AI", "Network"],
+  "entryPoints": {
+    "main": "Main.qml",
+    "barWidget": "BarWidget.qml",
+    "panel": "Panel.qml",
+    "settings": "Settings.qml"
+  },
+  "dependencies": {
+    "plugins": []
+  },
+  "metadata": {
+    "defaultSettings": {
+      "gatewayUrl": "http://127.0.0.1:18789",
+      "token": "",
+      "agentId": "main",
+      "user": "noctalia:claw",
+      "sessionKey": "",
+      "stream": true,
+      "openAiEndpointEnabledHint": true,
+      "requestTimeoutMs": 60000
+    }
+  }
+}
+
