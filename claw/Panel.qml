@@ -36,6 +36,20 @@ Item {
   property bool openAiEndpointEnabledHint: true
   property int requestTimeoutMs: 60000
 
+  // Slash command menu state
+  property bool commandMenuOpen: false
+  property int commandSelectedIndex: 0
+
+  // Common commands appear first via rank (lower = higher).
+  readonly property var commands: ([
+    { name: "new", template: "/new", hasArgs: false, usage: "", rank: 10, description: "Start a new chat (clears history)." },
+    { name: "clear", template: "/clear", hasArgs: false, usage: "", rank: 20, description: "Alias for /new." },
+    { name: "settings", template: "/settings", hasArgs: false, usage: "", rank: 30, description: "Toggle the in-panel settings." },
+    { name: "help", template: "/help", hasArgs: false, usage: "", rank: 40, description: "Show command help." },
+    { name: "stream", template: "/stream ", hasArgs: true, usage: "on|off", rank: 50, description: "Enable/disable streaming responses." },
+    { name: "agent", template: "/agent ", hasArgs: true, usage: "<id>", rank: 60, description: "Set agent id for routing." }
+  ])
+
   // Local components
   // (File in this plugin folder)
   // qmllint: disable=unqualified
@@ -44,11 +58,16 @@ Item {
   // If the plugin main instance exposes a messagesModel, use it so chat persists
   // across panel close/reopen. Fall back to a local model if not available.
   ListModel { id: fallbackMessagesModel }
+  ListModel { id: commandSuggestionsModel }
 
   function msgModel() {
     if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.messagesModel)
       return pluginApi.mainInstance.messagesModel
     return fallbackMessagesModel
+  }
+
+  function appendSystemMessage(text) {
+    _appendMessage("system", text)
   }
 
   function pickSetting(key, fallback) {
@@ -78,6 +97,15 @@ Item {
   function _setStatus(state, text) {
     if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.setStatus)
       pluginApi.mainInstance.setStatus(state, text || "")
+  }
+
+  function saveSettingsPartial() {
+    if (!pluginApi)
+      return
+
+    pluginApi.pluginSettings.agentId = root.editAgentId
+    pluginApi.pluginSettings.stream = root.editStream
+    pluginApi.saveSettings()
   }
 
   function clearChat() {
@@ -130,6 +158,194 @@ Item {
     return arr
   }
 
+  function commandShouldOpen(text) {
+    if (!text)
+      return false
+    if (text.length < 1)
+      return false
+    if (text[0] !== "/")
+      return false
+    // Only while typing the command token (no whitespace yet).
+    return text.indexOf(" ") === -1 && text.indexOf("\t") === -1 && text.indexOf("\n") === -1
+  }
+
+  function rebuildCommandSuggestions(text) {
+    if (!commandShouldOpen(text)) {
+      root.commandMenuOpen = false
+      commandSuggestionsModel.clear()
+      root.commandSelectedIndex = 0
+      return
+    }
+
+    var q = text.substring(1).toLowerCase()
+    var candidates = []
+
+    for (var i = 0; i < root.commands.length; i++) {
+      var c = root.commands[i]
+      if (!q || c.name.indexOf(q) === 0)
+        candidates.push(c)
+    }
+
+    candidates.sort(function(a, b) {
+      if (a.rank !== b.rank)
+        return a.rank - b.rank
+      if (a.name < b.name) return -1
+      if (a.name > b.name) return 1
+      return 0
+    })
+
+    commandSuggestionsModel.clear()
+    for (var j = 0; j < candidates.length; j++) {
+      var x = candidates[j]
+      commandSuggestionsModel.append({
+        name: x.name,
+        template: x.template,
+        hasArgs: x.hasArgs,
+        usage: x.usage,
+        description: x.description
+      })
+    }
+
+    root.commandMenuOpen = (commandSuggestionsModel.count > 0)
+    if (root.commandSelectedIndex >= commandSuggestionsModel.count)
+      root.commandSelectedIndex = 0
+  }
+
+  function insertSelectedCommand() {
+    if (!root.commandMenuOpen || commandSuggestionsModel.count < 1)
+      return
+    var idx = root.commandSelectedIndex
+    if (idx < 0 || idx >= commandSuggestionsModel.count)
+      idx = 0
+    var row = commandSuggestionsModel.get(idx)
+    composerInput.text = row.template
+    // Put cursor at end.
+    if (composerInput.cursorPosition !== undefined)
+      composerInput.cursorPosition = composerInput.text.length
+    // Dropdown will close when there is whitespace (for arg commands) or on next rebuild.
+    rebuildCommandSuggestions(composerInput.text)
+  }
+
+  function runSlashCommand(text) {
+    var t = (text || "").trim()
+    if (!t || t[0] !== "/")
+      return false
+
+    // Parse: /cmd [args...]
+    var parts = t.substring(1).split(/\s+/)
+    var cmd = (parts[0] || "").toLowerCase()
+    var args = parts.slice(1)
+
+    if (cmd === "new" || cmd === "clear") {
+      clearChat()
+      return true
+    }
+
+    if (cmd === "settings") {
+      root.showSettings = !root.showSettings
+      return true
+    }
+
+    if (cmd === "help") {
+      var help = "Commands:\\n"
+        for (var i = 0; i < root.commands.length; i++) {
+          var c = root.commands[i]
+          var usage = c.usage ? (" " + c.usage) : ""
+          help += "  " + c.template.trim() + usage + " - " + c.description + "\n"
+        }
+      appendSystemMessage(help.trim())
+      return true
+    }
+
+    if (cmd === "stream") {
+      if (args.length < 1) {
+        appendSystemMessage("Usage: /stream on|off")
+        return true
+      }
+      var v = (args[0] || "").toLowerCase()
+      if (v === "on" || v === "true" || v === "1") {
+        root.editStream = true
+        saveSettingsPartial()
+        appendSystemMessage("Streaming enabled.")
+        return true
+      }
+      if (v === "off" || v === "false" || v === "0") {
+        root.editStream = false
+        saveSettingsPartial()
+        appendSystemMessage("Streaming disabled.")
+        return true
+      }
+      appendSystemMessage("Usage: /stream on|off")
+      return true
+    }
+
+    if (cmd === "agent") {
+      if (args.length < 1) {
+        appendSystemMessage("Usage: /agent <id>")
+        return true
+      }
+      var id = args.join(" ").trim()
+      if (!id) {
+        appendSystemMessage("Usage: /agent <id>")
+        return true
+      }
+      root.editAgentId = id
+      saveSettingsPartial()
+      appendSystemMessage("Agent set to: " + id)
+      return true
+    }
+
+    appendSystemMessage("Unknown command: /" + cmd + ". Type /help for commands.")
+    return true
+  }
+
+  function handleComposerKey(event) {
+    if (!root.commandMenuOpen) {
+      // Normal behavior: Enter sends.
+      if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+        root.sendMessage()
+        event.accepted = true
+      }
+      return
+    }
+
+    if (event.key === Qt.Key_Escape) {
+      root.commandMenuOpen = false
+      event.accepted = true
+      return
+    }
+
+    if (event.key === Qt.Key_Down) {
+      root.commandSelectedIndex = Math.min(root.commandSelectedIndex + 1, commandSuggestionsModel.count - 1)
+      event.accepted = true
+      return
+    }
+
+    if (event.key === Qt.Key_Up) {
+      root.commandSelectedIndex = Math.max(root.commandSelectedIndex - 1, 0)
+      event.accepted = true
+      return
+    }
+
+    if (event.key === Qt.Key_PageDown) {
+      root.commandSelectedIndex = Math.min(root.commandSelectedIndex + 5, commandSuggestionsModel.count - 1)
+      event.accepted = true
+      return
+    }
+
+    if (event.key === Qt.Key_PageUp) {
+      root.commandSelectedIndex = Math.max(root.commandSelectedIndex - 5, 0)
+      event.accepted = true
+      return
+    }
+
+    if (event.key === Qt.Key_Tab || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+      insertSelectedCommand()
+      event.accepted = true
+      return
+    }
+  }
+
   function sendMessage() {
     if (root.isSending)
       return
@@ -137,6 +353,16 @@ Item {
     var text = (composerInput.text || "").trim()
     if (!text)
       return
+
+    // Slash commands are handled locally and do not call the gateway.
+    if (text[0] === "/") {
+      var handled = runSlashCommand(text)
+      if (handled) {
+        composerInput.text = ""
+        rebuildCommandSuggestions("")
+        return
+      }
+    }
 
     var outgoing = _buildOutgoingMessages(text)
 
@@ -616,14 +842,96 @@ Item {
         Layout.fillWidth: true
         spacing: Style.marginM
 
-        NTextInput {
-          id: composerInput
+        Item {
+          id: composerArea
           Layout.fillWidth: true
-          placeholderText: "Message OpenClaw..."
-          enabled: !root.isSending
+          implicitHeight: composerInput.implicitHeight
 
-          Keys.onReturnPressed: root.sendMessage()
-          Keys.onEnterPressed: root.sendMessage()
+          NTextInput {
+            id: composerInput
+            anchors.fill: parent
+            placeholderText: "Message OpenClaw..."
+            enabled: !root.isSending
+
+            onTextChanged: rebuildCommandSuggestions(text)
+            Keys.onPressed: handleComposerKey(event)
+          }
+
+          // Slash command dropdown
+          Rectangle {
+            id: commandMenu
+            visible: root.commandMenuOpen && commandSuggestionsModel.count > 0
+            width: composerArea.width
+            // Cap height; list is scrollable.
+            height: Math.min(240 * Style.uiScaleRatio, commandList.contentHeight + Style.marginS * 2)
+            radius: Style.radiusM
+            color: Color.mSurface
+            border.width: 1
+            border.color: Color.mOutlineVariant !== undefined ? Color.mOutlineVariant : Color.mOutline
+            clip: true
+
+            anchors.left: composerArea.left
+            anchors.bottom: composerArea.top
+            anchors.bottomMargin: Style.marginS
+
+            ListView {
+              id: commandList
+              anchors.fill: parent
+              anchors.margins: Style.marginS
+              model: commandSuggestionsModel
+              clip: true
+              currentIndex: root.commandSelectedIndex
+              onCurrentIndexChanged: root.commandSelectedIndex = currentIndex
+
+              delegate: Rectangle {
+                width: ListView.view.width
+                height: cmdRow.implicitHeight + Style.marginS
+                radius: Style.radiusS
+                color: (index === root.commandSelectedIndex)
+                  ? (Color.mSecondaryContainer !== undefined ? Color.mSecondaryContainer : Color.mSurfaceVariant)
+                  : "transparent"
+
+                RowLayout {
+                  id: cmdRow
+                  anchors.fill: parent
+                  anchors.margins: Style.marginS
+                  spacing: Style.marginM
+
+                  NText {
+                    text: "/" + model.name
+                    color: Color.mOnSurface
+                    font.weight: Font.DemiBold
+                    pointSize: Style.fontSizeM
+                  }
+
+                  NText {
+                    text: model.usage ? model.usage : ""
+                    color: Color.mOnSurfaceVariant
+                    pointSize: Style.fontSizeS
+                    visible: !!model.usage
+                  }
+
+                  Item { Layout.fillWidth: true }
+
+                  NText {
+                    text: model.description
+                    color: Color.mOnSurfaceVariant
+                    pointSize: Style.fontSizeS
+                    elide: Text.ElideRight
+                    Layout.maximumWidth: 320 * Style.uiScaleRatio
+                  }
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  onClicked: {
+                    root.commandSelectedIndex = index
+                    insertSelectedCommand()
+                  }
+                }
+              }
+            }
+          }
         }
 
         NButton {

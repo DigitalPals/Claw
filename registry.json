@@ -4,7 +4,7 @@
     {
       "id": "claw",
       "name": "Claw",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "official": false,
       "author": "DigitalPals",
       "description": "Menu bar chat panel for OpenClaw Gateway (OpenAI-compatible chat completions).",
@@ -12,7 +12,7 @@
       "minNoctaliaVersion": "3.6.0",
       "license": "MIT",
       "tags": ["Bar", "Panel", "AI", "Network"],
-      "lastUpdated": "2026-02-06T20:09:00Z"
+      "lastUpdated": "2026-02-06T20:23:37Z"
     }
   ]
 }
