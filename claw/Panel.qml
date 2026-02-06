@@ -41,7 +41,15 @@ Item {
   // qmllint: disable=unqualified
   // MessageBubble.qml is resolved relative to this file.
 
-  ListModel { id: messagesModel }
+  // If the plugin main instance exposes a messagesModel, use it so chat persists
+  // across panel close/reopen. Fall back to a local model if not available.
+  ListModel { id: fallbackMessagesModel }
+
+  function msgModel() {
+    if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.messagesModel)
+      return pluginApi.mainInstance.messagesModel
+    return fallbackMessagesModel
+  }
 
   function pickSetting(key, fallback) {
     if (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings[key] !== undefined)
@@ -73,7 +81,10 @@ Item {
   }
 
   function clearChat() {
-    messagesModel.clear()
+    if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.clearMessages)
+      pluginApi.mainInstance.clearMessages()
+    else
+      msgModel().clear()
     root.lastErrorText = ""
     root.lastHttpStatus = 0
     _setStatus("idle", "")
@@ -84,20 +95,24 @@ Item {
   }
 
   function _appendMessage(role, content) {
-    messagesModel.append({
-      role: role,
-      content: content,
-      ts: Date.now()
-    })
+    if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.appendMessage)
+      pluginApi.mainInstance.appendMessage(role, content)
+    else
+      msgModel().append({ role: role, content: content, ts: Date.now() })
 
     if (chatList.count > 0)
       chatList.positionViewAtIndex(chatList.count - 1, ListView.End)
   }
 
   function _setMessageContent(index, content) {
-    if (index < 0 || index >= messagesModel.count)
-      return
-    messagesModel.setProperty(index, "content", content)
+    var m = msgModel()
+    if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.setMessageContent) {
+      pluginApi.mainInstance.setMessageContent(index, content)
+    } else {
+      if (index < 0 || index >= m.count)
+        return
+      m.setProperty(index, "content", content)
+    }
 
     if (chatList.count > 0)
       chatList.positionViewAtIndex(chatList.count - 1, ListView.End)
@@ -105,8 +120,9 @@ Item {
 
   function _buildOutgoingMessages(newUserText) {
     var arr = []
-    for (var i = 0; i < messagesModel.count; i++) {
-      var m = messagesModel.get(i)
+    var model = msgModel()
+    for (var i = 0; i < model.count; i++) {
+      var m = model.get(i)
       if (m.role === "system" || m.role === "user" || m.role === "assistant")
         arr.push({ role: m.role, content: m.content })
     }
@@ -128,7 +144,7 @@ Item {
     composerInput.text = ""
 
     _appendMessage("assistant", "...")
-    var assistantIndex = messagesModel.count - 1
+    var assistantIndex = msgModel().count - 1
 
     root.lastErrorText = ""
     root.lastHttpStatus = 0
@@ -584,7 +600,7 @@ Item {
             height: parent.height
             clip: true
             spacing: Style.marginS
-            model: messagesModel
+            model: msgModel()
 
             delegate: MessageBubble {
               width: ListView.view.width

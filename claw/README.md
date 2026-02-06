@@ -11,9 +11,12 @@ Claw adds a menu bar widget that opens a chat panel. The panel connects to an Op
 - `Session Key` (optional): If set, sent as `x-openclaw-session-key`.
 - `Stream responses (SSE)`: Attempts SSE streaming; falls back to non-streaming when necessary.
 
+## Chat History
+
+Chat history is kept in memory by the plugin main instance, so you can close and reopen the panel and continue the conversation.
+
 ## Troubleshooting
 
 - HTTP 404: the chat-completions endpoint may be disabled in the gateway. Enable:
   - `gateway.http.endpoints.chatCompletions.enabled = true`
 - HTTP 401/403: token/auth is wrong or required but missing.
-
