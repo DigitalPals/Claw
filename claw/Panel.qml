@@ -36,6 +36,11 @@ Item {
   property bool openAiEndpointEnabledHint: true
   property int requestTimeoutMs: 60000
 
+  // Local components
+  // (File in this plugin folder)
+  // qmllint: disable=unqualified
+  // MessageBubble.qml is resolved relative to this file.
+
   ListModel { id: messagesModel }
 
   function pickSetting(key, fallback) {
@@ -370,38 +375,55 @@ Item {
         Layout.fillWidth: true
         spacing: Style.marginM
 
-        NText {
-          text: "Claw"
-          pointSize: Style.fontSizeL
-          font.weight: Font.Bold
-          color: Color.mOnSurface
-          Layout.fillWidth: true
-        }
-
         Rectangle {
-          width: 10 * Style.uiScaleRatio
-          height: width
-          radius: width / 2
-          color: {
-            var state = "idle"
-            if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.connectionState)
-              state = pluginApi.mainInstance.connectionState
-            if (state === "ok") return "#4CAF50"
-            if (state === "error") return "#F44336"
-            return Color.mOutline
-          }
+          Layout.fillWidth: true
+          color: Color.mSurface
+          radius: Style.radiusL
           border.width: 1
-          border.color: Color.mOutline
-        }
+          border.color: Style.capsuleBorderColor
 
-        NIconButton {
-          icon: root.showSettings ? "settings-off" : "settings"
-          onClicked: root.showSettings = !root.showSettings
-        }
+          implicitHeight: headerRow.implicitHeight + Style.marginS * 2
 
-        NIconButton {
-          icon: "trash"
-          onClicked: root.clearChat()
+          RowLayout {
+            id: headerRow
+            anchors.fill: parent
+            anchors.margins: Style.marginS
+            spacing: Style.marginM
+
+            NText {
+              text: "Claw"
+              pointSize: Style.fontSizeL
+              font.weight: Font.Bold
+              color: Color.mOnSurface
+              Layout.fillWidth: true
+            }
+
+            Rectangle {
+              width: 9 * Style.uiScaleRatio
+              height: width
+              radius: width / 2
+              color: {
+                var state = "idle"
+                if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.connectionState)
+                  state = pluginApi.mainInstance.connectionState
+                if (state === "ok") return "#4CAF50"
+                if (state === "error") return "#F44336"
+                return Color.mOutline
+              }
+              border.width: 1
+              border.color: Color.mOutline
+            }
+
+            NIconButton {
+              icon: root.showSettings ? "settings-off" : "settings"
+              onClicked: root.showSettings = !root.showSettings
+            }
+
+            NIconButton {
+              icon: "trash"
+              onClicked: root.clearChat()
+            }
+          }
         }
       }
 
@@ -412,8 +434,14 @@ Item {
         radius: Style.radiusL
         visible: root.showSettings
 
+        // Rectangle doesn't auto-size to its children; give it an implicit height.
+        implicitHeight: settingsLayout.implicitHeight + Style.marginM * 2
+
         ColumnLayout {
-          anchors.fill: parent
+          id: settingsLayout
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.top: parent.top
           anchors.margins: Style.marginM
           spacing: Style.marginS
 
@@ -542,8 +570,10 @@ Item {
       Rectangle {
         Layout.fillWidth: true
         Layout.fillHeight: true
-        color: Color.mSurfaceVariant
+        color: Color.mSurface
         radius: Style.radiusL
+        border.width: 1
+        border.color: Style.capsuleBorderColor
 
         NScrollView {
           anchors.fill: parent
@@ -556,39 +586,10 @@ Item {
             spacing: Style.marginS
             model: messagesModel
 
-            delegate: Item {
+            delegate: MessageBubble {
               width: ListView.view.width
-              height: bubble.implicitHeight + Style.marginS
-
-              Rectangle {
-                id: bubble
-
-                width: Math.min(parent.width * 0.9, Math.max(220 * Style.uiScaleRatio, contentText.implicitWidth + Style.marginM * 2))
-                color: (model.role === "user") ? Color.mPrimary : Color.mSurface
-                radius: Style.radiusM
-
-                anchors.left: (model.role === "user") ? undefined : parent.left
-                anchors.right: (model.role === "user") ? parent.right : undefined
-                anchors.leftMargin: Style.marginM
-                anchors.rightMargin: Style.marginM
-                anchors.top: parent.top
-                anchors.topMargin: Style.marginS
-
-                ColumnLayout {
-                  anchors.fill: parent
-                  anchors.margins: Style.marginM
-                  spacing: Style.marginXS
-
-                  NText {
-                    id: contentText
-                    Layout.fillWidth: true
-                    text: model.content
-                    wrapMode: Text.WordWrap
-                    color: (model.role === "user") ? Color.mOnPrimary : Color.mOnSurface
-                    pointSize: Style.fontSizeM
-                  }
-                }
-              }
+              role: model.role
+              content: model.content
             }
           }
         }
