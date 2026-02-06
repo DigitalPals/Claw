@@ -244,6 +244,12 @@ Item {
         drainSse()
 
       if (xhr.status >= 200 && xhr.status < 300) {
+        var contentType = xhr.getResponseHeader("Content-Type") || ""
+        if (contentType.indexOf("text/html") !== -1) {
+          fail("Received HTML from server. This usually means the Gateway URL points at the OpenClaw Control UI or a proxy that is not forwarding API requests.", xhr.status)
+          return
+        }
+
         if (!stream) {
           try {
             var obj = JSON.parse(xhr.responseText || "")
@@ -283,6 +289,8 @@ Item {
 
       if (status === 401 || status === 403) {
         msgText = "Authentication/authorization failed (HTTP " + status + "). Check token and gateway config."
+      } else if (status === 405) {
+        msgText = "Method Not Allowed (HTTP 405). This server is refusing POST/OPTIONS, which usually means you're hitting the OpenClaw Control UI or a reverse proxy that only allows GET. Point Claw at the OpenClaw Gateway API base URL and ensure /v1/chat/completions is enabled."
       } else if (status === 404 && root.openAiEndpointEnabledHint) {
         msgText = "Endpoint not found (HTTP 404). The gateway chat-completions endpoint may be disabled. Enable: gateway.http.endpoints.chatCompletions.enabled = true"
       } else {
@@ -610,4 +618,3 @@ Item {
     }
   }
 }
-
