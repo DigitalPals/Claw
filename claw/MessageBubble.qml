@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Controls
 import qs.Commons
 import qs.Widgets
 
@@ -155,12 +156,35 @@ Item {
     return Color.mOnSurface
   }
 
+  function extractUrls(raw) {
+    var s = (raw === null || raw === undefined) ? "" : String(raw)
+    var re = new RegExp("(https?:\\/\\/[^\\s<]+)", "g")
+    var out = []
+    var seen = {}
+    var m
+
+    while ((m = re.exec(s)) !== null) {
+      var url = m[1]
+      // Trim common trailing punctuation.
+      while (url.length > 0 && /[\\)\\]\\}\\.,;:!?]/.test(url[url.length - 1]))
+        url = url.substring(0, url.length - 1)
+      if (url.length === 0)
+        continue
+      if (seen[url])
+        continue
+      seen[url] = true
+      out.push(url)
+    }
+
+    return out
+  }
+
   Rectangle {
     id: bubble
 
     width: Math.min(root.width * 0.9, 820 * Style.uiScaleRatio)
-    // Use Text.paintedHeight; more compatible than TextEdit across Qt builds.
-    implicitHeight: Math.max(Style.fontSizeM * 1.6, contentText.paintedHeight) + Style.marginM * 2
+    implicitHeight: contentLayout.implicitHeight + Style.marginM * 2
+    clip: true
 
     color: root.bubbleColor()
     radius: Style.radiusM
@@ -174,20 +198,79 @@ Item {
     anchors.top: parent.top
     anchors.topMargin: Style.marginS
 
-    Text {
-      id: contentText
+    ColumnLayout {
+      id: contentLayout
       anchors.fill: parent
       anchors.margins: Style.marginM
-      textFormat: Text.RichText
-      text: root.renderRichText(root.content)
-      wrapMode: Text.WordWrap
-      color: root.textColor()
-      font.pointSize: Style.fontSizeM
-      // Avoid enum resolution issues across Qt builds; 1|2|4|8 enables selection + links.
-      textInteractionFlags: 15
+      spacing: Style.marginS
 
-      onLinkActivated: function(link) {
-        try { Qt.openUrlExternally(link) } catch (e) {}
+      // Use a Controls text editor for selection/copy. Plain Text doesn't support interaction
+      // flags in Noctalia's Qt build.
+      TextArea {
+        id: contentText
+
+        Layout.fillWidth: true
+        Layout.preferredHeight: implicitHeight
+
+        textFormat: TextEdit.RichText
+        text: root.renderRichText(root.content)
+        wrapMode: TextEdit.WordWrap
+        readOnly: true
+        selectByMouse: true
+
+        padding: 0
+        topPadding: 0
+        bottomPadding: 0
+        leftPadding: 0
+        rightPadding: 0
+
+        background: null
+        color: root.textColor()
+        font.pointSize: Math.max(1, Style.fontSizeM * Style.uiScaleRatio)
+
+        implicitHeight: Math.max(Style.fontSizeM * 1.6, contentHeight)
+        implicitWidth: 0
+      }
+
+      Flow {
+        id: linkRow
+        Layout.fillWidth: true
+        spacing: Style.marginS
+        visible: urlRepeater.count > 0
+
+        Repeater {
+          id: urlRepeater
+          model: root.extractUrls(root.content)
+
+          delegate: Rectangle {
+            radius: Style.radiusS
+            color: Qt.alpha(Color.mOnSurface, 0.06)
+            border.width: 1
+            border.color: Qt.alpha(Color.mOnSurface, 0.12)
+
+            implicitHeight: linkText.implicitHeight + Style.marginS * 2
+            implicitWidth: Math.min(linkText.implicitWidth + Style.marginS * 2, bubble.width - Style.marginM * 2)
+
+            NText {
+              id: linkText
+              anchors.centerIn: parent
+              text: modelData
+              pointSize: Style.fontSizeS
+              wrapMode: Text.NoWrap
+              elide: Text.ElideRight
+              color: Color.mPrimary !== undefined ? Color.mPrimary : root.textColor()
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              acceptedButtons: Qt.LeftButton
+              onClicked: function() {
+                try { Qt.openUrlExternally(modelData) } catch (e) {}
+              }
+            }
+          }
+        }
       }
     }
   }
