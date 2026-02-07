@@ -115,7 +115,7 @@ Item {
       msgModel().clear()
     root.lastErrorText = ""
     root.lastHttpStatus = 0
-    _setStatus("idle", "")
+    // Don't reset connection status when clearing chat history; it's a separate concern.
   }
 
   function _trimTrailingSlashes(s) {
