@@ -24,6 +24,62 @@ Item {
     return out
   }
 
+  function sanitizeUrlToken(url) {
+    var u = (url === null || url === undefined) ? "" : String(url)
+    u = u.trim()
+    if (!u)
+      return ""
+
+    // Remove surrounding angle brackets if present.
+    if (u.length >= 2 && u[0] === "<" && u[u.length - 1] === ">")
+      u = u.substring(1, u.length - 1)
+
+    function isHostOnlyHttpUrl(s) {
+      var rest = ""
+      if (s.indexOf("https://") === 0)
+        rest = s.substring(8)
+      else if (s.indexOf("http://") === 0)
+        rest = s.substring(7)
+      else
+        return false
+      return rest.indexOf("/") === -1
+    }
+
+    function endsWithIgnoreCase(s, suffix) {
+      if (s.length < suffix.length)
+        return false
+      return s.substring(s.length - suffix.length).toLowerCase() === suffix.toLowerCase()
+    }
+
+    function isTrailingPunct(ch) {
+      return ch === ")" || ch === "]" || ch === "}" || ch === "." || ch === "," || ch === ";"
+          || ch === ":" || ch === "!" || ch === "?" || ch === "*"
+    }
+
+    // Strip a single trailing slash temporarily so we can remove trailing emphasis (or %2A) before it.
+    var hadSlash = (u.length > 0 && u[u.length - 1] === "/")
+    if (hadSlash)
+      u = u.substring(0, u.length - 1)
+
+    // Remove markdown emphasis stars at the end.
+    while (u.length > 0 && u[u.length - 1] === "*")
+      u = u.substring(0, u.length - 1)
+
+    // Remove percent-encoded asterisks at the end: %2A%2A...
+    while (endsWithIgnoreCase(u, "%2a"))
+      u = u.substring(0, u.length - 3)
+
+    // Trim common trailing punctuation.
+    while (u.length > 0 && isTrailingPunct(u[u.length - 1]))
+      u = u.substring(0, u.length - 1)
+
+    // Restore slash if it was a real path delimiter; otherwise drop it for host-only URLs.
+    if (hadSlash && !isHostOnlyHttpUrl(u))
+      u = u + "/"
+
+    return u
+  }
+
   // Wrap bare URLs with <...> so Qt markdown conversion will generate clickable links.
   // Avoids changing anything inside fenced code blocks or inline code spans.
   function _autoLinkBareUrlsInMarkdown(md) {
@@ -66,7 +122,7 @@ Item {
           url = url.substring(0, url.length - 1)
         }
 
-        out += "<" + url + ">" + trailing
+        out += "<" + sanitizeUrlToken(url) + ">" + trailing
         i = j
         continue
       }
@@ -143,10 +199,7 @@ Item {
     var m
 
     while ((m = re.exec(s)) !== null) {
-      var url = m[1]
-      // Trim common trailing punctuation.
-      while (url.length > 0 && /[\\)\\]\\}\\.,;:!?\\*]/.test(url[url.length - 1]))
-        url = url.substring(0, url.length - 1)
+      var url = sanitizeUrlToken(m[1])
       if (url.length === 0)
         continue
       if (seen[url])
@@ -159,8 +212,7 @@ Item {
   }
 
   function openUrl(url) {
-    var u = (url === null || url === undefined) ? "" : String(url)
-    u = u.trim()
+    var u = sanitizeUrlToken(url)
     if (!u)
       return
 
