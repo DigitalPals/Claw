@@ -81,26 +81,6 @@ Item {
     var s = (md === null || md === undefined) ? "" : String(md)
     s = _escapeHtml(s)
 
-    // Markdown links: [label](https://url)
-    // Use RegExp constructor instead of /.../ literal: QML's JS parser can be picky about regex literals.
-    var reMdLink = new RegExp("\\\\[([^\\\\]]+?)\\\\]\\\\((https?:\\\\/\\\\/[^\\\\s\\\\)]+)\\\\)", "g")
-    s = s.replace(reMdLink, function(_, label, url) {
-      return '<a href="' + url.replace(/"/g, "%22") + '">' + label + "</a>"
-    })
-
-    // Bare URLs.
-    var reBareUrl = new RegExp("(https?:\\\\/\\\\/[^\\\\s<]+[^\\\\s<\\\\)\\\\]\\\\}\\\\.,;:!?])", "g")
-    s = s.replace(reBareUrl, function(_, url) {
-      return '<a href="' + url.replace(/"/g, "%22") + '">' + url + "</a>"
-    })
-
-    // Inline code.
-    s = s.replace(new RegExp("`([^`]+?)`", "g"), "<code>$1</code>")
-
-    // Bold then italic (best-effort).
-    s = s.replace(new RegExp("\\\\*\\\\*([^*<>\\\\n][\\\\s\\\\S]*?)\\\\*\\\\*", "g"), "<b>$1</b>")
-    s = s.replace(new RegExp("\\\\*(?!\\\\*)([^*<>\\\\n]+?)\\\\*(?!\\\\*)", "g"), "<i>$1</i>")
-
     // Newlines.
     s = s.replace(/\\r\\n/g, "\\n").replace(/\\r/g, "\\n")
     s = s.replace(/\\n/g, "<br/>")
@@ -109,24 +89,21 @@ Item {
 
   function renderRichText(raw) {
     var md = (raw === null || raw === undefined) ? "" : String(raw)
-    var linkColor = (root.role === "user")
-      ? root.textColor()
-      : (Color.mPrimary !== undefined ? Color.mPrimary : root.textColor())
+    var fg = root.textColor()
 
     try {
       if (Qt && typeof Qt.convertFromMarkdown === "function") {
         // Improve UX: clickable bare URLs + proper markdown rendering (e.g. **...**).
         var md2 = _autoLinkBareUrlsInMarkdown(md)
         var html = Qt.convertFromMarkdown(md2)
-        // Ensure links are visible in dark-ish themes.
-        html = String(html).replace(/<a\\s+href=/g, '<a style="color: ' + linkColor + '; text-decoration: underline" href=')
-        return html
+        // Wrap to force a reasonable default foreground color in dark themes.
+        // (Relying on TextArea.color does not consistently apply to rich text across builds.)
+        return '<span style="color: ' + fg + ';">' + String(html) + "</span>"
       }
     } catch (e) {}
 
-    var html2 = _basicMarkdownToHtml(md)
-    html2 = String(html2).replace(/<a\\s+href=/g, '<a style="color: ' + linkColor + '; text-decoration: underline" href=')
-    return html2
+    // Fallback: plain escaped text with line breaks. Links are still available via chips below.
+    return '<span style="color: ' + fg + ';">' + _basicMarkdownToHtml(md) + "</span>"
   }
 
   function bubbleColor() {
