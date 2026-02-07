@@ -60,7 +60,8 @@ Item {
         var url = s.substring(i, j)
         var trailing = ""
         // Trim common trailing punctuation that is unlikely to be part of the URL.
-        while (url.length > 0 && /[\\)\\]\\}\\.,;:!?]/.test(url[url.length - 1])) {
+        // Also trim '*' to handle markdown emphasis like **https://example.com**.
+        while (url.length > 0 && /[\\)\\]\\}\\.,;:!?\\*]/.test(url[url.length - 1])) {
           trailing = url[url.length - 1] + trailing
           url = url.substring(0, url.length - 1)
         }
