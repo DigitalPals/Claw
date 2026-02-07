@@ -6,7 +6,7 @@
   "author": "DigitalPals",
   "license": "MIT",
   "repository": "https://github.com/DigitalPals/Claw",
-  "description": "Menu bar chat panel for OpenClaw Gateway (OpenAI-compatible chat completions).",
+  "description": "Menu bar chat panel for OpenClaw Gateway.",
   "tags": ["Bar", "Panel", "AI", "Network"],
   "entryPoints": {
     "main": "Main.qml",

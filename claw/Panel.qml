@@ -377,6 +377,9 @@ Item {
     root.isSending = true
     _setStatus("idle", "")
 
+    if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.beginRequest)
+      pluginApi.mainInstance.beginRequest()
+
     _requestChatCompletions(outgoing, assistantIndex, root.editStream, true)
   }
 
@@ -403,6 +406,9 @@ Item {
       root.lastErrorText = msg || "Request failed"
       _setStatus("error", root.lastErrorText)
       _setMessageContent(assistantIndex, "Error: " + root.lastErrorText)
+
+      if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.endRequest)
+        pluginApi.mainInstance.endRequest()
     }
 
     function finishOk() {
@@ -413,6 +419,9 @@ Item {
 
       if (!assistantText)
         _setMessageContent(assistantIndex, "(empty response)")
+
+      if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.endRequest)
+        pluginApi.mainInstance.endRequest()
     }
 
     function drainSse() {

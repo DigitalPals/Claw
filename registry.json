@@ -7,7 +7,7 @@
       "version": "0.1.4",
       "official": false,
       "author": "DigitalPals",
-      "description": "Menu bar chat panel for OpenClaw Gateway (OpenAI-compatible chat completions).",
+      "description": "Menu bar chat panel for OpenClaw Gateway.",
       "repository": "https://github.com/DigitalPals/Claw",
       "minNoctaliaVersion": "3.6.0",
       "license": "MIT",
