@@ -159,7 +159,8 @@ Item {
     id: bubble
 
     width: Math.min(root.width * 0.9, 820 * Style.uiScaleRatio)
-    implicitHeight: contentText.implicitHeight + Style.marginM * 2
+    // Use TextEdit.contentHeight; some Qt builds don't like overriding TextEdit.implicitHeight.
+    implicitHeight: Math.max(Style.fontSizeM * 1.6, contentText.contentHeight) + Style.marginM * 2
 
     color: root.bubbleColor()
     radius: Style.radiusM
@@ -184,8 +185,6 @@ Item {
       wrapMode: TextEdit.Wrap
       color: root.textColor()
       font.pointSize: Style.fontSizeM
-      activeFocusOnPress: true
-      cursorVisible: false
       selectedTextColor: Color.mOnSecondaryContainer !== undefined ? Color.mOnSecondaryContainer : color
       selectionColor: Color.mSecondaryContainer !== undefined ? Color.mSecondaryContainer : Color.mOutline
       textInteractionFlags: Qt.TextSelectableByMouse
@@ -196,9 +195,6 @@ Item {
       onLinkActivated: function(link) {
         try { Qt.openUrlExternally(link) } catch (e) {}
       }
-
-      // TextEdit implicit sizing is driven by contentHeight for wrapped text.
-      implicitHeight: Math.max(Style.fontSizeM * 1.6, contentHeight)
     }
   }
 }
