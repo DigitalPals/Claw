@@ -82,21 +82,24 @@ Item {
     s = _escapeHtml(s)
 
     // Markdown links: [label](https://url)
-    s = s.replace(/\\[([^\\]]+?)\\]\\((https?:\\/\\/[^\\s\\)]+)\\)/g, function(_, label, url) {
-      return '<a href="' + url.replace(/\"/g, "%22") + '">' + label + "</a>"
+    // Use RegExp constructor instead of /.../ literal: QML's JS parser can be picky about regex literals.
+    var reMdLink = new RegExp("\\\\[([^\\\\]]+?)\\\\]\\\\((https?:\\\\/\\\\/[^\\\\s\\\\)]+)\\\\)", "g")
+    s = s.replace(reMdLink, function(_, label, url) {
+      return '<a href="' + url.replace(/"/g, "%22") + '">' + label + "</a>"
     })
 
     // Bare URLs.
-    s = s.replace(/(https?:\\/\\/[^\\s<]+[^\\s<\\)\\]\\}\\.,;:!?])/g, function(_, url) {
-      return '<a href="' + url.replace(/\"/g, "%22") + '">' + url + "</a>"
+    var reBareUrl = new RegExp("(https?:\\\\/\\\\/[^\\\\s<]+[^\\\\s<\\\\)\\\\]\\\\}\\\\.,;:!?])", "g")
+    s = s.replace(reBareUrl, function(_, url) {
+      return '<a href="' + url.replace(/"/g, "%22") + '">' + url + "</a>"
     })
 
     // Inline code.
-    s = s.replace(/`([^`]+?)`/g, "<code>$1</code>")
+    s = s.replace(new RegExp("`([^`]+?)`", "g"), "<code>$1</code>")
 
     // Bold then italic (best-effort).
-    s = s.replace(/\\*\\*([^*<>\\n][\\s\\S]*?)\\*\\*/g, "<b>$1</b>")
-    s = s.replace(/\\*(?!\\*)([^*<>\\n]+?)\\*(?!\\*)/g, "<i>$1</i>")
+    s = s.replace(new RegExp("\\\\*\\\\*([^*<>\\\\n][\\\\s\\\\S]*?)\\\\*\\\\*", "g"), "<b>$1</b>")
+    s = s.replace(new RegExp("\\\\*(?!\\\\*)([^*<>\\\\n]+?)\\\\*(?!\\\\*)", "g"), "<i>$1</i>")
 
     // Newlines.
     s = s.replace(/\\r\\n/g, "\\n").replace(/\\r/g, "\\n")
