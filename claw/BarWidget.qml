@@ -9,6 +9,11 @@ Rectangle {
 
   // Injected by PluginService
   property var pluginApi: null
+  // Use a typed Item so property change notifications (ex: hasUnreadChanged)
+  // reliably trigger bindings. Accessing through a plain `var` can miss updates.
+  readonly property Item main: (pluginApi && pluginApi.mainInstance) ? pluginApi.mainInstance : null
+  readonly property bool hasUnread: main ? !!main.hasUnread : false
+  readonly property string connectionState: main ? (main.connectionState || "idle") : "idle"
 
   // Required properties for bar widgets
   property ShellScreen screen
@@ -26,21 +31,15 @@ Rectangle {
   border.width: 1
   border.color: Style.capsuleBorderColor
 
-  function statusColor() {
-    // Single indicator:
-    // - Theme primary when there's an unread response.
-    // - Otherwise green/red/neutral based on connection state.
-    if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.hasUnread !== undefined) {
-      if (!!pluginApi.mainInstance.hasUnread)
-        return (Color.mPrimary !== undefined) ? Color.mPrimary : "#2196F3"
-    }
-
-    var state = "idle"
-    if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.connectionState)
-      state = pluginApi.mainInstance.connectionState
-    if (state === "ok")
+  // Single indicator:
+  // - Theme primary when there's an unread response.
+  // - Otherwise green/red/neutral based on connection state.
+  readonly property color statusIndicatorColor: {
+    if (root.hasUnread)
+      return (Color.mPrimary !== undefined) ? Color.mPrimary : "#2196F3"
+    if (root.connectionState === "ok")
       return "#4CAF50"
-    if (state === "error")
+    if (root.connectionState === "error")
       return "#F44336"
     return Color.mOutline
   }
@@ -65,7 +64,7 @@ Rectangle {
         width: 7 * Style.uiScaleRatio
         height: width
         radius: width / 2
-        color: root.statusColor()
+        color: root.statusIndicatorColor
         border.width: 1
         border.color: Style.capsuleColor
         anchors.right: iconItem.right

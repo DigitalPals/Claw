@@ -9,6 +9,9 @@ Item {
 
   // Injected by PluginPanelSlot
   property var pluginApi: null
+  // Use a typed Item so property change notifications (ex: hasUnreadChanged)
+  // reliably trigger bindings. Accessing through a plain `var` can miss updates.
+  readonly property Item main: (pluginApi && pluginApi.mainInstance) ? pluginApi.mainInstance : null
 
   // SmartPanel properties (required)
   readonly property var geometryPlaceholder: panelContainer
@@ -22,9 +25,11 @@ Item {
 
   // UI state
   property bool showSettings: false
-  readonly property bool isSending: (pluginApi && pluginApi.mainInstance) ? !!pluginApi.mainInstance.isSending : false
-  readonly property string lastErrorText: (pluginApi && pluginApi.mainInstance) ? (pluginApi.mainInstance.lastRequestErrorText || "") : ""
-  readonly property int lastHttpStatus: (pluginApi && pluginApi.mainInstance) ? (pluginApi.mainInstance.lastRequestHttpStatus || 0) : 0
+  readonly property bool isSending: main ? !!main.isSending : false
+  readonly property string lastErrorText: main ? (main.lastRequestErrorText || "") : ""
+  readonly property int lastHttpStatus: main ? (main.lastRequestHttpStatus || 0) : 0
+  readonly property bool hasUnread: main ? !!main.hasUnread : false
+  readonly property string connectionState: main ? (main.connectionState || "idle") : "idle"
 
   // Local editable settings (used at runtime; Save persists).
   property string editGatewayUrl: "http://127.0.0.1:18789"
@@ -63,8 +68,8 @@ Item {
   ListModel { id: commandSuggestionsModel }
 
   function msgModel() {
-    if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.messagesModel)
-      return pluginApi.mainInstance.messagesModel
+    if (main && main.messagesModel)
+      return main.messagesModel
     return fallbackMessagesModel
   }
 
@@ -98,20 +103,20 @@ Item {
   onPluginApiChanged: reloadFromSettings()
   Component.onCompleted: {
     reloadFromSettings()
-    if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.setPanelActive)
-      pluginApi.mainInstance.setPanelActive(true)
-    if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.markRead)
-      pluginApi.mainInstance.markRead()
+    if (main && main.setPanelActive)
+      main.setPanelActive(true)
+    if (main && main.markRead)
+      main.markRead()
   }
 
   Component.onDestruction: {
-    if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.setPanelActive)
-      pluginApi.mainInstance.setPanelActive(false)
+    if (main && main.setPanelActive)
+      main.setPanelActive(false)
   }
 
   function _setStatus(state, text) {
-    if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.setStatus)
-      pluginApi.mainInstance.setStatus(state, text || "")
+    if (main && main.setStatus)
+      main.setStatus(state, text || "")
   }
 
   function saveSettingsPartial() {
@@ -124,8 +129,8 @@ Item {
   }
 
   function clearChat() {
-    if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.clearChat)
-      pluginApi.mainInstance.clearChat()
+    if (main && main.clearChat)
+      main.clearChat()
     else
       msgModel().clear()
   }
@@ -135,8 +140,8 @@ Item {
   }
 
   function _appendMessage(role, content) {
-    if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.appendMessage)
-      pluginApi.mainInstance.appendMessage(role, content)
+    if (main && main.appendMessage)
+      main.appendMessage(role, content)
     else
       msgModel().append({ role: role, content: content, ts: Date.now() })
 
@@ -146,8 +151,8 @@ Item {
 
   function _setMessageContent(index, content) {
     var m = msgModel()
-    if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.setMessageContent) {
-      pluginApi.mainInstance.setMessageContent(index, content)
+    if (main && main.setMessageContent) {
+      main.setMessageContent(index, content)
     } else {
       if (index < 0 || index >= m.count)
         return
@@ -440,16 +445,10 @@ Item {
               radius: width / 2
               color: {
                 // Single indicator behavior: unread overrides status color.
-                if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.hasUnread !== undefined) {
-                  if (!!pluginApi.mainInstance.hasUnread)
-                    return (Color.mPrimary !== undefined) ? Color.mPrimary : "#2196F3"
-                }
-
-                var state = "idle"
-                if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.connectionState)
-                  state = pluginApi.mainInstance.connectionState
-                if (state === "ok") return "#4CAF50"
-                if (state === "error") return "#F44336"
+                if (root.hasUnread)
+                  return (Color.mPrimary !== undefined) ? Color.mPrimary : "#2196F3"
+                if (root.connectionState === "ok") return "#4CAF50"
+                if (root.connectionState === "error") return "#F44336"
                 return Color.mOutline
               }
               border.width: 1
