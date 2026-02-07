@@ -1,7 +1,7 @@
 {
   "id": "claw",
   "name": "Claw",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "minNoctaliaVersion": "3.6.0",
   "author": "DigitalPals",
   "license": "MIT",

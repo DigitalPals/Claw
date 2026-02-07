@@ -439,6 +439,12 @@ Item {
               height: width
               radius: width / 2
               color: {
+                // Single indicator behavior: unread overrides status color.
+                if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.hasUnread !== undefined) {
+                  if (!!pluginApi.mainInstance.hasUnread)
+                    return (Color.mPrimary !== undefined) ? Color.mPrimary : "#2196F3"
+                }
+
                 var state = "idle"
                 if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.connectionState)
                   state = pluginApi.mainInstance.connectionState

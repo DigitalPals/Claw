@@ -1,5 +1,7 @@
 import QtQuick
 import QtQuick.Controls
+import Quickshell
+import Quickshell.Io
 import qs.Commons
 import qs.Widgets
 
@@ -155,6 +157,30 @@ Item {
     return out
   }
 
+  function openUrl(url) {
+    var u = (url === null || url === undefined) ? "" : String(url)
+    u = u.trim()
+    if (!u)
+      return
+
+    // Prefer the same mechanism used by Noctalia itself.
+    try {
+      Quickshell.execDetached(["xdg-open", u])
+      return
+    } catch (e) {}
+
+    // Fallback (may be a no-op depending on environment).
+    try {
+      Qt.openUrlExternally(u)
+      return
+    } catch (e2) {}
+
+    try {
+      if (ToastService && ToastService.showNotice)
+        ToastService.showNotice("Claw", "Failed to open link: " + u, "alert-triangle")
+    } catch (e3) {}
+  }
+
   Rectangle {
     id: bubble
 
@@ -238,7 +264,7 @@ Item {
             var link = _linkAt(mouse)
             if (link) {
               mouse.accepted = true
-              try { Qt.openUrlExternally(link) } catch (e) {}
+              root.openUrl(link)
               return
             }
             mouse.accepted = false
@@ -280,7 +306,7 @@ Item {
               cursorShape: Qt.PointingHandCursor
               acceptedButtons: Qt.LeftButton
               onClicked: function() {
-                try { Qt.openUrlExternally(modelData) } catch (e) {}
+                root.openUrl(modelData)
               }
             }
           }
