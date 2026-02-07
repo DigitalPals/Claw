@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import QtQuick.Controls
 import qs.Commons
 import qs.Widgets
+import qs.Services.UI
 
 Item {
   id: root
@@ -35,6 +36,8 @@ Item {
   property bool editStream: true
   property bool openAiEndpointEnabledHint: true
   property int requestTimeoutMs: 60000
+  property bool editNotifyOnResponse: true
+  property bool editNotifyOnlyWhenAppInactive: true
 
   // Slash command menu state
   property bool commandMenuOpen: false
@@ -89,6 +92,8 @@ Item {
     root.editStream = !!pickSetting("stream", true)
     root.openAiEndpointEnabledHint = !!pickSetting("openAiEndpointEnabledHint", true)
     root.requestTimeoutMs = pickSetting("requestTimeoutMs", 60000)
+    root.editNotifyOnResponse = !!pickSetting("notifyOnResponse", true)
+    root.editNotifyOnlyWhenAppInactive = !!pickSetting("notifyOnlyWhenAppInactive", true)
   }
 
   onPluginApiChanged: reloadFromSettings()
@@ -116,6 +121,43 @@ Item {
     root.lastErrorText = ""
     root.lastHttpStatus = 0
     // Don't reset connection status when clearing chat history; it's a separate concern.
+  }
+
+  function _truncateForToast(s, maxLen) {
+    var t = (s === null || s === undefined) ? "" : String(s)
+    t = t.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+    // Prefer first non-empty line.
+    var parts = t.split("\n")
+    for (var i = 0; i < parts.length; i++) {
+      var line = String(parts[i] || "").trim()
+      if (line.length > 0) {
+        t = line
+        break
+      }
+    }
+    if (t.length > maxLen)
+      t = t.substring(0, maxLen - 1) + "…"
+    return t
+  }
+
+  function _maybeNotifyResponse(text, isError) {
+    if (!root.editNotifyOnResponse)
+      return
+
+    if (root.editNotifyOnlyWhenAppInactive) {
+      try {
+        if (Qt.application && Qt.application.active)
+          return
+      } catch (e0) {}
+    }
+
+    var title = "Claw"
+    var body = _truncateForToast(text || "", 180)
+    if (!body)
+      body = isError ? "Request failed" : "Response received"
+
+    if (ToastService && ToastService.showNotice)
+      ToastService.showNotice(title, body, isError ? "alert-triangle" : "message")
   }
 
   function _trimTrailingSlashes(s) {
@@ -407,6 +449,8 @@ Item {
       _setStatus("error", root.lastErrorText)
       _setMessageContent(assistantIndex, "Error: " + root.lastErrorText)
 
+      _maybeNotifyResponse(root.lastErrorText, true)
+
       if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.endRequest)
         pluginApi.mainInstance.endRequest()
     }
@@ -419,6 +463,8 @@ Item {
 
       if (!assistantText)
         _setMessageContent(assistantIndex, "(empty response)")
+
+      _maybeNotifyResponse(assistantText, false)
 
       if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.endRequest)
         pluginApi.mainInstance.endRequest()
@@ -758,6 +804,23 @@ Item {
             onCheckedChanged: root.editStream = checked
           }
 
+          NToggle {
+            Layout.fillWidth: true
+            label: "Notify when response arrives"
+            description: "Show a Noctalia toast notification when OpenClaw finishes responding."
+            checked: root.editNotifyOnResponse
+            onCheckedChanged: root.editNotifyOnResponse = checked
+          }
+
+          NToggle {
+            Layout.fillWidth: true
+            label: "Only notify when app inactive"
+            description: "Only notify if Noctalia is not the focused application."
+            checked: root.editNotifyOnlyWhenAppInactive
+            enabled: root.editNotifyOnResponse
+            onCheckedChanged: root.editNotifyOnlyWhenAppInactive = checked
+          }
+
           RowLayout {
             Layout.fillWidth: true
             spacing: Style.marginM
@@ -774,6 +837,8 @@ Item {
                 root.pluginApi.pluginSettings.user = root.editUser
                 root.pluginApi.pluginSettings.sessionKey = root.editSessionKey
                 root.pluginApi.pluginSettings.stream = root.editStream
+                root.pluginApi.pluginSettings.notifyOnResponse = root.editNotifyOnResponse
+                root.pluginApi.pluginSettings.notifyOnlyWhenAppInactive = root.editNotifyOnlyWhenAppInactive
                 root.pluginApi.saveSettings()
               }
             }

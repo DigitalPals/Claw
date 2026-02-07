@@ -21,6 +21,8 @@ ColumnLayout {
   property bool editStream: true
   property bool editHint: true
   property int editTimeoutMs: 60000
+  property bool editNotifyOnResponse: true
+  property bool editNotifyOnlyWhenAppInactive: true
 
   function pickSetting(key, fallback) {
     if (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings[key] !== undefined)
@@ -41,6 +43,8 @@ ColumnLayout {
     root.editStream = !!pickSetting("stream", true)
     root.editHint = !!pickSetting("openAiEndpointEnabledHint", true)
     root.editTimeoutMs = pickSetting("requestTimeoutMs", 60000)
+    root.editNotifyOnResponse = !!pickSetting("notifyOnResponse", true)
+    root.editNotifyOnlyWhenAppInactive = !!pickSetting("notifyOnlyWhenAppInactive", true)
   }
 
   onPluginApiChanged: reloadFromSettings()
@@ -59,6 +63,8 @@ ColumnLayout {
     pluginApi.pluginSettings.stream = root.editStream
     pluginApi.pluginSettings.openAiEndpointEnabledHint = root.editHint
     pluginApi.pluginSettings.requestTimeoutMs = root.editTimeoutMs
+    pluginApi.pluginSettings.notifyOnResponse = root.editNotifyOnResponse
+    pluginApi.pluginSettings.notifyOnlyWhenAppInactive = root.editNotifyOnlyWhenAppInactive
 
     pluginApi.saveSettings()
     Logger.i("Claw", "Settings saved")
@@ -134,6 +140,23 @@ ColumnLayout {
 
   NToggle {
     Layout.fillWidth: true
+    label: "Notify when response arrives"
+    description: "Show a Noctalia toast notification when OpenClaw finishes responding."
+    checked: root.editNotifyOnResponse
+    onCheckedChanged: root.editNotifyOnResponse = checked
+  }
+
+  NToggle {
+    Layout.fillWidth: true
+    label: "Only notify when app inactive"
+    description: "Only notify if Noctalia is not the focused application."
+    checked: root.editNotifyOnlyWhenAppInactive
+    enabled: root.editNotifyOnResponse
+    onCheckedChanged: root.editNotifyOnlyWhenAppInactive = checked
+  }
+
+  NToggle {
+    Layout.fillWidth: true
     label: "Show endpoint-disabled hint"
     description: "Show help text when the gateway returns 404/403 for chat completions."
     checked: root.editHint
@@ -153,4 +176,3 @@ ColumnLayout {
     }
   }
 }
-
