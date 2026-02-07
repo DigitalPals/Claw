@@ -27,6 +27,14 @@ Rectangle {
   border.color: Style.capsuleBorderColor
 
   function statusColor() {
+    // Single indicator:
+    // - Theme primary when there's an unread response.
+    // - Otherwise green/red/neutral based on connection state.
+    if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.hasUnread !== undefined) {
+      if (!!pluginApi.mainInstance.hasUnread)
+        return (Color.mPrimary !== undefined) ? Color.mPrimary : "#2196F3"
+    }
+
     var state = "idle"
     if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.connectionState)
       state = pluginApi.mainInstance.connectionState
@@ -35,12 +43,6 @@ Rectangle {
     if (state === "error")
       return "#F44336"
     return Color.mOutline
-  }
-
-  function unreadVisible() {
-    if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.hasUnread !== undefined)
-      return !!pluginApi.mainInstance.hasUnread
-    return false
   }
 
   RowLayout {
@@ -70,20 +72,6 @@ Rectangle {
         anchors.top: iconItem.top
         anchors.rightMargin: -2 * Style.uiScaleRatio
         anchors.topMargin: -2 * Style.uiScaleRatio
-      }
-
-      Rectangle {
-        visible: root.unreadVisible()
-        width: 7 * Style.uiScaleRatio
-        height: width
-        radius: width / 2
-        color: "#2196F3"
-        border.width: 1
-        border.color: Style.capsuleColor
-        anchors.right: iconItem.right
-        anchors.bottom: iconItem.bottom
-        anchors.rightMargin: -2 * Style.uiScaleRatio
-        anchors.bottomMargin: -2 * Style.uiScaleRatio
       }
     }
   }

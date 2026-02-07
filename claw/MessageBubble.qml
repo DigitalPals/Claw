@@ -142,7 +142,7 @@ Item {
     while ((m = re.exec(s)) !== null) {
       var url = m[1]
       // Trim common trailing punctuation.
-      while (url.length > 0 && /[\\)\\]\\}\\.,;:!?]/.test(url[url.length - 1]))
+      while (url.length > 0 && /[\\)\\]\\}\\.,;:!?\\*]/.test(url[url.length - 1]))
         url = url.substring(0, url.length - 1)
       if (url.length === 0)
         continue
@@ -209,6 +209,41 @@ Item {
 
         implicitHeight: Math.max(Style.fontSizeM * 1.6, contentHeight)
         implicitWidth: 0
+
+        // Handle link clicks ourselves. Text interaction flags are not available in this environment.
+        // We only accept the event when the pointer is on a link; otherwise we let TextArea handle
+        // selection/copy.
+        MouseArea {
+          anchors.fill: parent
+          acceptedButtons: Qt.LeftButton
+          hoverEnabled: true
+          propagateComposedEvents: true
+          preventStealing: true
+
+          function _linkAt(mouse) {
+            try {
+              if (contentText && typeof contentText.linkAt === "function")
+                return contentText.linkAt(mouse.x, mouse.y)
+            } catch (e) {}
+            return ""
+          }
+
+          onPositionChanged: mouse => {
+            var link = _linkAt(mouse)
+            cursorShape = link ? Qt.PointingHandCursor : Qt.IBeamCursor
+            mouse.accepted = false
+          }
+
+          onPressed: mouse => {
+            var link = _linkAt(mouse)
+            if (link) {
+              mouse.accepted = true
+              try { Qt.openUrlExternally(link) } catch (e) {}
+              return
+            }
+            mouse.accepted = false
+          }
+        }
       }
 
       Flow {
