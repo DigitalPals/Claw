@@ -37,6 +37,12 @@ Rectangle {
     return Color.mOutline
   }
 
+  function unreadVisible() {
+    if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.hasUnread !== undefined)
+      return !!pluginApi.mainInstance.hasUnread
+    return false
+  }
+
   RowLayout {
     id: content
     anchors.centerIn: parent
@@ -64,6 +70,20 @@ Rectangle {
         anchors.top: iconItem.top
         anchors.rightMargin: -2 * Style.uiScaleRatio
         anchors.topMargin: -2 * Style.uiScaleRatio
+      }
+
+      Rectangle {
+        visible: root.unreadVisible()
+        width: 7 * Style.uiScaleRatio
+        height: width
+        radius: width / 2
+        color: "#2196F3"
+        border.width: 1
+        border.color: Style.capsuleColor
+        anchors.right: iconItem.right
+        anchors.bottom: iconItem.bottom
+        anchors.rightMargin: -2 * Style.uiScaleRatio
+        anchors.bottomMargin: -2 * Style.uiScaleRatio
       }
     }
   }
