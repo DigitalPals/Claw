@@ -183,10 +183,8 @@ Item {
       wrapMode: Text.WordWrap
       color: root.textColor()
       font.pointSize: Style.fontSizeM
-      textInteractionFlags: Qt.TextSelectableByMouse
-        | Qt.TextSelectableByKeyboard
-        | Qt.LinksAccessibleByMouse
-        | Qt.LinksAccessibleByKeyboard
+      // Avoid enum resolution issues across Qt builds; 1|2|4|8 enables selection + links.
+      textInteractionFlags: 15
 
       onLinkActivated: function(link) {
         try { Qt.openUrlExternally(link) } catch (e) {}
