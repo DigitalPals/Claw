@@ -937,12 +937,16 @@ Item {
             visible: root.commandMenuOpen && commandSuggestionsModel.count > 0
             width: composerArea.width
             // Cap height; list is scrollable.
-            height: Math.min(240 * Style.uiScaleRatio, commandList.contentHeight + Style.marginS * 2)
+            // Avoid a 0-height deadlock: ListView.contentHeight can stay 0 until the view has a non-zero height.
+            height: visible
+              ? Math.min(240 * Style.uiScaleRatio, Math.max(48 * Style.uiScaleRatio, commandList.contentHeight + Style.marginS * 2))
+              : 0
             radius: Style.radiusM
             color: Color.mSurface
             border.width: 1
             border.color: Color.mOutlineVariant !== undefined ? Color.mOutlineVariant : Color.mOutline
             clip: true
+            z: 1000
 
             anchors.left: composerArea.left
             anchors.bottom: composerArea.top
