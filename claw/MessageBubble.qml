@@ -159,8 +159,8 @@ Item {
     id: bubble
 
     width: Math.min(root.width * 0.9, 820 * Style.uiScaleRatio)
-    // Use TextEdit.contentHeight; some Qt builds don't like overriding TextEdit.implicitHeight.
-    implicitHeight: Math.max(Style.fontSizeM * 1.6, contentText.contentHeight) + Style.marginM * 2
+    // Use Text.paintedHeight; more compatible than TextEdit across Qt builds.
+    implicitHeight: Math.max(Style.fontSizeM * 1.6, contentText.paintedHeight) + Style.marginM * 2
 
     color: root.bubbleColor()
     radius: Style.radiusM
@@ -174,19 +174,15 @@ Item {
     anchors.top: parent.top
     anchors.topMargin: Style.marginS
 
-    TextEdit {
+    Text {
       id: contentText
       anchors.fill: parent
       anchors.margins: Style.marginM
-      readOnly: true
-      selectByMouse: true
-      textFormat: TextEdit.RichText
+      textFormat: Text.RichText
       text: root.renderRichText(root.content)
-      wrapMode: TextEdit.Wrap
+      wrapMode: Text.WordWrap
       color: root.textColor()
       font.pointSize: Style.fontSizeM
-      selectedTextColor: Color.mOnSecondaryContainer !== undefined ? Color.mOnSecondaryContainer : color
-      selectionColor: Color.mSecondaryContainer !== undefined ? Color.mSecondaryContainer : Color.mOutline
       textInteractionFlags: Qt.TextSelectableByMouse
         | Qt.TextSelectableByKeyboard
         | Qt.LinksAccessibleByMouse
