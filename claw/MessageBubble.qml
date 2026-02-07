@@ -12,6 +12,120 @@ Item {
   // Layout contract for ListView: consumer sets width.
   implicitHeight: bubble.implicitHeight + Style.marginS
 
+  function _escapeHtml(s) {
+    var out = (s === null || s === undefined) ? "" : String(s)
+    out = out.replace(/&/g, "&amp;")
+    out = out.replace(/</g, "&lt;")
+    out = out.replace(/>/g, "&gt;")
+    out = out.replace(/\"/g, "&quot;")
+    out = out.replace(/'/g, "&#39;")
+    return out
+  }
+
+  // Wrap bare URLs with <...> so Qt markdown conversion will generate clickable links.
+  // Avoids changing anything inside fenced code blocks or inline code spans.
+  function _autoLinkBareUrlsInMarkdown(md) {
+    var s = (md === null || md === undefined) ? "" : String(md)
+    var out = ""
+    var i = 0
+    var inFence = false
+    var inInline = false
+
+    while (i < s.length) {
+      // Fenced code blocks (```).
+      if (!inInline && s.substring(i, i + 3) === "```") {
+        inFence = !inFence
+        out += "```"
+        i += 3
+        continue
+      }
+
+      // Inline code spans (`...`) only when not in a fence.
+      if (!inFence && s[i] === "`") {
+        inInline = !inInline
+        out += "`"
+        i += 1
+        continue
+      }
+
+      // Outside code: autolink bare URLs.
+      if (!inFence && !inInline
+          && (s.substring(i, i + 7) === "http://" || s.substring(i, i + 8) === "https://")) {
+        var j = i
+        while (j < s.length && !/\s/.test(s[j]))
+          j++
+
+        var url = s.substring(i, j)
+        var trailing = ""
+        // Trim common trailing punctuation that is unlikely to be part of the URL.
+        while (url.length > 0 && /[\\)\\]\\}\\.,;:!?]/.test(url[url.length - 1])) {
+          trailing = url[url.length - 1] + trailing
+          url = url.substring(0, url.length - 1)
+        }
+
+        out += "<" + url + ">" + trailing
+        i = j
+        continue
+      }
+
+      out += s[i]
+      i += 1
+    }
+
+    return out
+  }
+
+  function _basicMarkdownToHtml(md) {
+    // Minimal fallback if Qt.convertFromMarkdown isn't available.
+    // Goal: keep it safe (escaped) and useful (links + basic emphasis).
+    var s = (md === null || md === undefined) ? "" : String(md)
+    s = _escapeHtml(s)
+
+    // Markdown links: [label](https://url)
+    s = s.replace(/\\[([^\\]]+?)\\]\\((https?:\\/\\/[^\\s\\)]+)\\)/g, function(_, label, url) {
+      return '<a href="' + url.replace(/\"/g, "%22") + '">' + label + "</a>"
+    })
+
+    // Bare URLs.
+    s = s.replace(/(https?:\\/\\/[^\\s<]+[^\\s<\\)\\]\\}\\.,;:!?])/g, function(_, url) {
+      return '<a href="' + url.replace(/\"/g, "%22") + '">' + url + "</a>"
+    })
+
+    // Inline code.
+    s = s.replace(/`([^`]+?)`/g, "<code>$1</code>")
+
+    // Bold then italic (best-effort).
+    s = s.replace(/\\*\\*([^*<>\\n][\\s\\S]*?)\\*\\*/g, "<b>$1</b>")
+    s = s.replace(/\\*(?!\\*)([^*<>\\n]+?)\\*(?!\\*)/g, "<i>$1</i>")
+
+    // Newlines.
+    s = s.replace(/\\r\\n/g, "\\n").replace(/\\r/g, "\\n")
+    s = s.replace(/\\n/g, "<br/>")
+    return s
+  }
+
+  function renderRichText(raw) {
+    var md = (raw === null || raw === undefined) ? "" : String(raw)
+    var linkColor = (root.role === "user")
+      ? root.textColor()
+      : (Color.mPrimary !== undefined ? Color.mPrimary : root.textColor())
+
+    try {
+      if (Qt && typeof Qt.convertFromMarkdown === "function") {
+        // Improve UX: clickable bare URLs + proper markdown rendering (e.g. **...**).
+        var md2 = _autoLinkBareUrlsInMarkdown(md)
+        var html = Qt.convertFromMarkdown(md2)
+        // Ensure links are visible in dark-ish themes.
+        html = String(html).replace(/<a\\s+href=/g, '<a style="color: ' + linkColor + '; text-decoration: underline" href=')
+        return html
+      }
+    } catch (e) {}
+
+    var html2 = _basicMarkdownToHtml(md)
+    html2 = String(html2).replace(/<a\\s+href=/g, '<a style="color: ' + linkColor + '; text-decoration: underline" href=')
+    return html2
+  }
+
   function bubbleColor() {
     if (root.role === "user") {
       // Prefer container if available, fall back to primary.
@@ -41,7 +155,7 @@ Item {
   Rectangle {
     id: bubble
 
-    width: Math.min(root.width * 0.9, Math.max(240 * Style.uiScaleRatio, contentText.implicitWidth + Style.marginM * 2))
+    width: Math.min(root.width * 0.9, 820 * Style.uiScaleRatio)
     implicitHeight: contentText.implicitHeight + Style.marginM * 2
 
     color: root.bubbleColor()
@@ -56,15 +170,32 @@ Item {
     anchors.top: parent.top
     anchors.topMargin: Style.marginS
 
-    NText {
+    TextEdit {
       id: contentText
       anchors.fill: parent
       anchors.margins: Style.marginM
-      text: root.content
-      wrapMode: Text.WordWrap
+      readOnly: true
+      selectByMouse: true
+      textFormat: TextEdit.RichText
+      text: root.renderRichText(root.content)
+      wrapMode: TextEdit.Wrap
       color: root.textColor()
-      pointSize: Style.fontSizeM
+      font.pointSize: Style.fontSizeM
+      activeFocusOnPress: true
+      cursorVisible: false
+      selectedTextColor: Color.mOnSecondaryContainer !== undefined ? Color.mOnSecondaryContainer : color
+      selectionColor: Color.mSecondaryContainer !== undefined ? Color.mSecondaryContainer : Color.mOutline
+      textInteractionFlags: Qt.TextSelectableByMouse
+        | Qt.TextSelectableByKeyboard
+        | Qt.LinksAccessibleByMouse
+        | Qt.LinksAccessibleByKeyboard
+
+      onLinkActivated: function(link) {
+        try { Qt.openUrlExternally(link) } catch (e) {}
+      }
+
+      // TextEdit implicit sizing is driven by contentHeight for wrapped text.
+      implicitHeight: Math.max(Style.fontSizeM * 1.6, contentHeight)
     }
   }
 }
-
