@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Layouts
 import QtQuick.Controls
 import qs.Commons
 import qs.Widgets
@@ -183,7 +182,7 @@ Item {
     id: bubble
 
     width: Math.min(root.width * 0.9, 820 * Style.uiScaleRatio)
-    implicitHeight: contentLayout.implicitHeight + Style.marginM * 2
+    implicitHeight: contentColumn.implicitHeight + Style.marginM * 2
     clip: true
 
     color: root.bubbleColor()
@@ -198,10 +197,11 @@ Item {
     anchors.top: parent.top
     anchors.topMargin: Style.marginS
 
-    ColumnLayout {
-      id: contentLayout
-      anchors.fill: parent
-      anchors.margins: Style.marginM
+    Column {
+      id: contentColumn
+      x: Style.marginM
+      y: Style.marginM
+      width: parent.width - Style.marginM * 2
       spacing: Style.marginS
 
       // Use a Controls text editor for selection/copy. Plain Text doesn't support interaction
@@ -209,14 +209,16 @@ Item {
       TextArea {
         id: contentText
 
-        Layout.fillWidth: true
-        Layout.preferredHeight: implicitHeight
+        width: parent.width
+        height: implicitHeight
 
         textFormat: TextEdit.RichText
         text: root.renderRichText(root.content)
         wrapMode: TextEdit.WordWrap
         readOnly: true
         selectByMouse: true
+        activeFocusOnPress: false
+        focusPolicy: Qt.NoFocus
 
         padding: 0
         topPadding: 0
@@ -234,7 +236,7 @@ Item {
 
       Flow {
         id: linkRow
-        Layout.fillWidth: true
+        width: parent.width
         spacing: Style.marginS
         visible: urlRepeater.count > 0
 
