@@ -19,6 +19,7 @@ Item {
   property int lastRequestHttpStatus: 0
   property string lastRequestErrorText: ""
   property bool panelActive: false
+  property bool panelAtBottom: false
   property bool hasUnread: false
 
   // Used to avoid heartbeat overwriting status while a request is in-flight.
@@ -49,8 +50,6 @@ Item {
 
   function setPanelActive(active) {
     root.panelActive = !!active
-    if (root.panelActive)
-      root.hasUnread = false
   }
 
   function markRead() {
@@ -82,6 +81,8 @@ Item {
     if (index < 0 || index >= messagesModel.count)
       return
     messagesModel.setProperty(index, "content", content)
+    if (!root.panelActive || !root.panelAtBottom)
+      root.hasUnread = true
   }
 
   ListModel {
@@ -211,7 +212,7 @@ Item {
     }
 
     function markUnreadIfNeeded() {
-      if (!root.panelActive)
+      if (!root.panelActive || !root.panelAtBottom)
         root.hasUnread = true
     }
 

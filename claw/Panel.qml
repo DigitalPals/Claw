@@ -23,6 +23,18 @@ Item {
 
   anchors.fill: parent
 
+  // Scroll state
+  property bool userScrolledUp: false
+  property bool _autoScrolling: false
+
+  function _scrollToEnd() {
+    if (chatList.count < 1)
+      return
+    root._autoScrolling = true
+    chatList.positionViewAtIndex(chatList.count - 1, ListView.End)
+    Qt.callLater(function() { root._autoScrolling = false })
+  }
+
   // UI state
   property bool showSettings: false
   readonly property bool isSending: main ? !!main.isSending : false
@@ -47,14 +59,22 @@ Item {
   property bool commandMenuOpen: false
   property int commandSelectedIndex: 0
 
-  // Common commands appear first via rank (lower = higher).
+  // Command suggestions for the autocomplete dropdown.
+  // Gateway commands are sent as regular messages; the gateway processes them server-side.
+  // Client-only commands (settings, stream, agent) are handled locally.
   readonly property var commands: ([
-    { name: "new", template: "/new", hasArgs: false, usage: "", rank: 10, description: "Start a new chat (clears history)." },
-    { name: "clear", template: "/clear", hasArgs: false, usage: "", rank: 20, description: "Alias for /new." },
-    { name: "settings", template: "/settings", hasArgs: false, usage: "", rank: 30, description: "Toggle the in-panel settings." },
-    { name: "help", template: "/help", hasArgs: false, usage: "", rank: 40, description: "Show command help." },
-    { name: "stream", template: "/stream ", hasArgs: true, usage: "on|off", rank: 50, description: "Enable/disable streaming responses." },
-    { name: "agent", template: "/agent ", hasArgs: true, usage: "<id>", rank: 60, description: "Set agent id for routing." }
+    { name: "new", template: "/new", hasArgs: false, usage: "", rank: 10, description: "Reset session / start new chat." },
+    { name: "help", template: "/help", hasArgs: false, usage: "", rank: 20, description: "Show available commands." },
+    { name: "status", template: "/status", hasArgs: false, usage: "", rank: 30, description: "Show current status and provider usage." },
+    { name: "think", template: "/think ", hasArgs: true, usage: "off|minimal|low|medium|high|xhigh", rank: 40, description: "Set reasoning depth." },
+    { name: "model", template: "/model ", hasArgs: true, usage: "<name>", rank: 50, description: "Select LLM provider/model." },
+    { name: "usage", template: "/usage ", hasArgs: true, usage: "off|tokens|full|cost", rank: 60, description: "Control per-response usage footer." },
+    { name: "stop", template: "/stop", hasArgs: false, usage: "", rank: 70, description: "Stop current operation." },
+    { name: "compact", template: "/compact", hasArgs: false, usage: "", rank: 80, description: "Compact message history." },
+    { name: "verbose", template: "/verbose ", hasArgs: true, usage: "on|full|off", rank: 90, description: "Control verbosity." },
+    { name: "settings", template: "/settings", hasArgs: false, usage: "", rank: 200, description: "[Local] Toggle the in-panel settings." },
+    { name: "stream", template: "/stream ", hasArgs: true, usage: "on|off", rank: 210, description: "[Local] Enable/disable SSE streaming." },
+    { name: "agent", template: "/agent ", hasArgs: true, usage: "<id>", rank: 220, description: "[Local] Set agent id for routing." }
   ])
 
   // Local components
@@ -105,13 +125,23 @@ Item {
     reloadFromSettings()
     if (main && main.setPanelActive)
       main.setPanelActive(true)
-    if (main && main.markRead)
-      main.markRead()
+    Qt.callLater(function() {
+      root._scrollToEnd()
+      Qt.callLater(function() {
+        if (main) {
+          main.panelAtBottom = chatList.atYEnd
+          if (chatList.atYEnd)
+            main.markRead()
+        }
+      })
+    })
   }
 
   Component.onDestruction: {
     if (main && main.setPanelActive)
       main.setPanelActive(false)
+    if (main)
+      main.panelAtBottom = false
   }
 
   function _setStatus(state, text) {
@@ -145,8 +175,8 @@ Item {
     else
       msgModel().append({ role: role, content: content, ts: Date.now() })
 
-    if (chatList.count > 0)
-      chatList.positionViewAtIndex(chatList.count - 1, ListView.End)
+    if (!root.userScrolledUp)
+      _scrollToEnd()
   }
 
   function _setMessageContent(index, content) {
@@ -159,8 +189,8 @@ Item {
       m.setProperty(index, "content", content)
     }
 
-    if (chatList.count > 0)
-      chatList.positionViewAtIndex(chatList.count - 1, ListView.End)
+    if (!root.userScrolledUp)
+      _scrollToEnd()
   }
 
   function _buildOutgoingMessages(newUserText) {
@@ -239,8 +269,17 @@ Item {
     // Put cursor at end.
     if (composerInput.cursorPosition !== undefined)
       composerInput.cursorPosition = composerInput.text.length
-    // Dropdown will close when there is whitespace (for arg commands) or on next rebuild.
-    rebuildCommandSuggestions(composerInput.text)
+
+    // No-arg commands match their own prefix forever, so close the menu
+    // immediately. Arg commands (template ends with space) will close once
+    // rebuildCommandSuggestions sees whitespace.
+    if (!row.hasArgs) {
+      root.commandMenuOpen = false
+      commandSuggestionsModel.clear()
+      root.commandSelectedIndex = 0
+    } else {
+      rebuildCommandSuggestions(composerInput.text)
+    }
   }
 
   function runSlashCommand(text) {
@@ -253,24 +292,10 @@ Item {
     var cmd = (parts[0] || "").toLowerCase()
     var args = parts.slice(1)
 
-    if (cmd === "new" || cmd === "clear") {
-      clearChat()
-      return true
-    }
+    // --- Client-only commands (never sent to gateway) ---
 
     if (cmd === "settings") {
       root.showSettings = !root.showSettings
-      return true
-    }
-
-    if (cmd === "help") {
-      var help = "Commands:\\n"
-        for (var i = 0; i < root.commands.length; i++) {
-          var c = root.commands[i]
-          var usage = c.usage ? (" " + c.usage) : ""
-          help += "  " + c.template.trim() + usage + " - " + c.description + "\n"
-        }
-      appendSystemMessage(help.trim())
       return true
     }
 
@@ -312,8 +337,16 @@ Item {
       return true
     }
 
-    appendSystemMessage("Unknown command: /" + cmd + ". Type /help for commands.")
-    return true
+    // --- Commands with local side-effects + sent to gateway ---
+
+    if (cmd === "new" || cmd === "clear") {
+      clearChat()
+      // Fall through to send to gateway so the server resets its session too.
+      return false
+    }
+
+    // All other /commands are forwarded to the gateway as regular messages.
+    return false
   }
 
   function handleComposerKey(event) {
@@ -371,7 +404,8 @@ Item {
     if (!text)
       return
 
-    // Slash commands are handled locally and do not call the gateway.
+    // Client-only slash commands (settings, stream, agent) are handled locally.
+    // All other /commands fall through and are sent to the gateway.
     if (text[0] === "/") {
       var handled = runSlashCommand(text)
       if (handled) {
@@ -381,6 +415,7 @@ Item {
       }
     }
 
+    root.userScrolledUp = false
     composerInput.text = ""
     if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.sendUserText) {
       pluginApi.mainInstance.sendUserText(text, {
@@ -646,11 +681,53 @@ Item {
             spacing: Style.marginS
             model: msgModel()
 
+            onAtYEndChanged: {
+              if (main)
+                main.panelAtBottom = chatList.atYEnd
+              if (chatList.atYEnd) {
+                root.userScrolledUp = false
+                if (main && main.markRead)
+                  main.markRead()
+              } else if (!root._autoScrolling && !chatList.moving) {
+                root.userScrolledUp = true
+              }
+            }
+
+            onMovementEnded: {
+              if (!chatList.atYEnd)
+                root.userScrolledUp = true
+            }
+
+            onCountChanged: {
+              if (!root.userScrolledUp)
+                root._scrollToEnd()
+            }
+
+            onContentHeightChanged: {
+              if (!root.userScrolledUp)
+                root._scrollToEnd()
+            }
+
             delegate: MessageBubble {
               width: ListView.view.width
               role: model.role
               content: model.content
             }
+          }
+        }
+
+        NIconButton {
+          icon: "arrow-down"
+          visible: root.userScrolledUp
+          z: 100
+          anchors.bottom: parent.bottom
+          anchors.horizontalCenter: parent.horizontalCenter
+          anchors.bottomMargin: Style.marginM
+          onClicked: {
+            root.userScrolledUp = false
+            root._scrollToEnd()
+            if (main && main.markRead)
+              main.markRead()
           }
         }
       }
