@@ -18,7 +18,9 @@ Item {
 
   // Request/UX state (owned by main so it survives panel close).
   property bool isSending: false
-  property bool panelActive: false
+  property int _panelActiveCount: 0
+  readonly property bool panelActive: _panelActiveCount > 0
+  property bool popoutWindowVisible: false
   property bool panelAtBottom: false
   property var unreadSessions: ({})
   readonly property bool hasUnread: Object.keys(unreadSessions).length > 0
@@ -113,7 +115,8 @@ Item {
   }
 
   function setPanelActive(active) {
-    root.panelActive = !!active
+    root._panelActiveCount += active ? 1 : -1
+    if (root._panelActiveCount < 0) root._panelActiveCount = 0
   }
 
   function markRead() {
@@ -903,6 +906,35 @@ Item {
         connectionState: root.connectionState,
         lastErrorText: root.lastErrorText
       }
+    }
+  }
+
+  FloatingWindow {
+    id: popoutWindow
+    title: "OpenClaw Chat"
+    visible: root.popoutWindowVisible
+    implicitWidth: 800
+    implicitHeight: 700
+    minimumSize: Qt.size(400, 300)
+    color: Color.mSurface
+
+    onClosed: root.popoutWindowVisible = false
+
+    onVisibleChanged: {
+      if (visible) {
+        root._panelActiveCount += 1
+        Qt.callLater(function() { popoutPanel._scrollToEnd() })
+      } else {
+        root._panelActiveCount = Math.max(0, root._panelActiveCount - 1)
+        root.panelAtBottom = false
+      }
+    }
+
+    Panel {
+      id: popoutPanel
+      anchors.fill: parent
+      pluginApi: root.pluginApi
+      isInsidePopout: true
     }
   }
 }

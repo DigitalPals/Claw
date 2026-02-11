@@ -12,6 +12,7 @@ Item {
 
   // Injected by PluginPanelSlot
   property var pluginApi: null
+  property bool isInsidePopout: false
   // Use a typed Item so property change notifications (ex: hasUnreadChanged)
   // reliably trigger bindings. Accessing through a plain `var` can miss updates.
   readonly property Item main: (pluginApi && pluginApi.mainInstance) ? pluginApi.mainInstance : null
@@ -212,7 +213,7 @@ Item {
   onPluginApiChanged: reloadFromSettings()
   Component.onCompleted: {
     reloadFromSettings()
-    if (main && main.setPanelActive)
+    if (!root.isInsidePopout && main && main.setPanelActive)
       main.setPanelActive(true)
     Qt.callLater(function() {
       root._scrollToEnd()
@@ -227,10 +228,12 @@ Item {
   }
 
   Component.onDestruction: {
-    if (main && main.setPanelActive)
-      main.setPanelActive(false)
-    if (main)
-      main.panelAtBottom = false
+    if (!root.isInsidePopout) {
+      if (main && main.setPanelActive)
+        main.setPanelActive(false)
+      if (main)
+        main.panelAtBottom = false
+    }
   }
 
   function _setStatus(state, text) {
@@ -603,6 +606,21 @@ Item {
             NIconButton {
               icon: root.showSettings ? "settings-off" : "settings"
               onClicked: root.showSettings = !root.showSettings
+            }
+
+            NIconButton {
+              icon: "external-link"
+              visible: !root.isInsidePopout
+              onClicked: {
+                if (main) {
+                  main.popoutWindowVisible = true
+                  if (root.pluginApi && root.pluginApi.closePanel) {
+                    root.pluginApi.withCurrentScreen(function(screen) {
+                      root.pluginApi.closePanel(screen)
+                    })
+                  }
+                }
+              }
             }
 
             NIconButton {
