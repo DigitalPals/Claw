@@ -1,4 +1,4 @@
-# Claw (Noctalia Plugin Source)
+# OpenClaw Chat for Noctalia Shell (Plugin Source)
 
 This repository is a **Noctalia plugin source** that can be added to the Noctalia plugin manager. It currently contains one plugin: `claw`.
 
@@ -8,13 +8,13 @@ This repository is a **Noctalia plugin source** that can be added to the Noctali
    - Name: `DigitalPals Plugins`
    - URL: `https://github.com/DigitalPals/Claw`
 
-2. Install the `Claw` plugin from the plugin list.
+2. Install the `OpenClaw Chat` plugin from the plugin list.
 
-3. Enable the plugin and add the Claw bar widget to your bar.
+3. Enable the plugin and add the OpenClaw Chat bar widget to your bar.
 
 ## OpenClaw Gateway Setup
 
-Claw talks to the OpenClaw Gateway using the OpenAI-compatible HTTP endpoint:
+OpenClaw Chat talks to the OpenClaw Gateway using the OpenAI-compatible HTTP endpoint:
 - `POST /v1/chat/completions`
 - Default gateway URL: `http://127.0.0.1:18789`
 

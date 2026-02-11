@@ -59,7 +59,7 @@ ColumnLayout {
   }
 
   NText {
-    text: "Claw"
+    text: "OpenClaw Chat"
     pointSize: Style.fontSizeXL
     font.weight: Font.Bold
     color: Color.mOnSurface

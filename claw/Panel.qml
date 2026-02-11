@@ -402,10 +402,10 @@ Item {
 
   function _breadcrumbText() {
     if (root.viewMode === "sessions")
-      return "Claw \u203A " + _channelLabel(root.selectedChannelId)
+      return _channelLabel(root.selectedChannelId)
     if (root.viewMode === "chat")
-      return "Claw \u203A " + _channelLabel(root.selectedChannelId) + " \u203A " + _sessionDisplayName(root.activeSessionKey)
-    return "Claw"
+      return _channelLabel(root.selectedChannelId) + " \u203A " + _sessionDisplayName(root.activeSessionKey)
+    return "OpenClaw Chat"
   }
 
   function runSlashCommand(text) {

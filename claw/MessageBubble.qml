@@ -644,7 +644,7 @@ Item {
 
     try {
       if (ToastService && ToastService.showNotice)
-        ToastService.showNotice("Claw", "Failed to open link: " + u, "alert-triangle")
+        ToastService.showNotice("OpenClaw Chat", "Failed to open link: " + u, "alert-triangle")
     } catch (e3) {}
   }
 

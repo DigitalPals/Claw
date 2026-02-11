@@ -1,6 +1,6 @@
-# Claw (Noctalia Plugin)
+# OpenClaw Chat (Noctalia Plugin)
 
-Claw adds a menu bar widget that opens a chat panel. The panel connects to an OpenClaw Gateway (local or remote) via the OpenAI-compatible `POST /v1/chat/completions` endpoint.
+OpenClaw Chat adds a menu bar widget that opens a chat panel. The panel connects to an OpenClaw Gateway (local or remote) via the OpenAI-compatible `POST /v1/chat/completions` endpoint.
 
 ## Settings
 
