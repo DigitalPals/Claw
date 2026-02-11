@@ -4,6 +4,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Services.UI
+import "lib/protocol.js" as Protocol
 
 Item {
   id: root
@@ -131,46 +132,15 @@ Item {
   }
 
   function _markSessionUnread(sessionKey) {
-    if (!sessionKey)
-      return
-    var old = root.unreadSessions
-    if (old[sessionKey])
-      return
-    var fresh = {}
-    for (var k in old)
-      fresh[k] = true
-    fresh[sessionKey] = true
-    root.unreadSessions = fresh
+    root.unreadSessions = Protocol.markSessionUnread(root.unreadSessions, sessionKey)
   }
 
   function _clearSessionUnread(sessionKey) {
-    if (!sessionKey)
-      return
-    var old = root.unreadSessions
-    if (!old[sessionKey])
-      return
-    var fresh = {}
-    for (var k in old) {
-      if (k !== sessionKey)
-        fresh[k] = true
-    }
-    root.unreadSessions = fresh
+    root.unreadSessions = Protocol.clearSessionUnread(root.unreadSessions, sessionKey)
   }
 
   function _clearChannelSessions(channelId) {
-    if (!channelId)
-      return
-    var old = root.unreadSessions
-    var fresh = {}
-    var changed = false
-    for (var k in old) {
-      if (_channelFromSessionKey(k) === channelId)
-        changed = true
-      else
-        fresh[k] = true
-    }
-    if (changed)
-      root.unreadSessions = fresh
+    root.unreadSessions = Protocol.clearChannelSessions(root.unreadSessions, channelId)
   }
 
   readonly property int _maxMessages: 500
@@ -218,22 +188,7 @@ Item {
     return fallback
   }
 
-  function _truncateForToast(s, maxLen) {
-    var t = (s === null || s === undefined) ? "" : String(s)
-    t = t.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
-    // Prefer first non-empty line.
-    var parts = t.split("\n")
-    for (var i = 0; i < parts.length; i++) {
-      var line = String(parts[i] || "").trim()
-      if (line.length > 0) {
-        t = line
-        break
-      }
-    }
-    if (t.length > maxLen)
-      t = t.substring(0, maxLen - 1) + "\u2026"
-    return t
-  }
+  function _truncateForToast(s, maxLen) { return Protocol.truncateForToast(s, maxLen) }
 
   function _maybeNotifyResponse(text, isError, opts) {
     var notifyOn = opts && opts.notifyOnResponse !== undefined
@@ -468,14 +423,7 @@ Item {
   property string _instanceId: ""
 
   function _ensureInstanceId() {
-    if (!root._instanceId) {
-      // Generate a simple UUID-like string
-      var s = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx"
-      root._instanceId = s.replace(/[xy]/g, function(c) {
-        var r = Math.random() * 16 | 0
-        return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16)
-      })
-    }
+    root._instanceId = Protocol.ensureInstanceId(root._instanceId)
     return root._instanceId
   }
 
@@ -579,16 +527,7 @@ Item {
   // Channel / Session API
   // ──────────────────────────────────────────────
 
-  // Extract the channel type from a session key.
-  // Format: "agent:<agentId>:<channelType>[:<peer>...]"
-  function _channelFromSessionKey(sessionKey) {
-    var parts = (sessionKey || "").split(":")
-    if (parts.length >= 3 && parts[0] === "agent")
-      return parts[2]
-    if (parts.length >= 2)
-      return parts[1]
-    return ""
-  }
+  function _channelFromSessionKey(sessionKey) { return Protocol.channelFromSessionKey(sessionKey) }
 
   function _virtualChannelLabel(channelType) {
     return _channelLabelMap[channelType]
@@ -672,17 +611,7 @@ Item {
     }, 10000)
   }
 
-  function _filterSessionsForChannel(channelId) {
-    var filtered = []
-    for (var i = 0; i < root.allSessions.length; i++) {
-      var s = root.allSessions[i]
-      // Prefer the explicit channel field; fall back to parsing the key
-      var sCh = s.channel || _channelFromSessionKey(s.key || "")
-      if (sCh === channelId)
-        filtered.push(s)
-    }
-    return filtered
-  }
+  function _filterSessionsForChannel(channelId) { return Protocol.filterSessionsForChannel(root.allSessions, channelId) }
 
   function fetchSessions(channelId) {
     // First, filter from cached allSessions for immediate display
@@ -747,19 +676,7 @@ Item {
     }, 15000)
   }
 
-  function _extractContentBlocksJson(contentArray) {
-    // Only serialize if there are non-text blocks (images, etc.)
-    var hasNonText = false
-    for (var i = 0; i < contentArray.length; i++) {
-      if (contentArray[i] && contentArray[i].type !== "text") {
-        hasNonText = true
-        break
-      }
-    }
-    if (!hasNonText)
-      return ""
-    return JSON.stringify(contentArray)
-  }
+  function _extractContentBlocksJson(contentArray) { return Protocol.extractContentBlocksJson(contentArray) }
 
   function sendChatWithAttachments(sessionKey, messageText, attachments, contentBlocksJson) {
     if (root.isSending)
@@ -845,22 +762,7 @@ Item {
   // Chat Event Handling (streaming)
   // ──────────────────────────────────────────────
 
-  function _extractTextFromContent(content) {
-    if (content == null)
-      return ""
-    if (typeof content === "string")
-      return content
-    if (Array.isArray(content)) {
-      var parts = []
-      for (var i = 0; i < content.length; i++) {
-        var block = content[i]
-        if (block && block.type === "text" && block.text)
-          parts.push(block.text)
-      }
-      return parts.join("\n")
-    }
-    return ""
-  }
+  function _extractTextFromContent(content) { return Protocol.extractTextFromContent(content) }
 
   function _finishStreaming(index) {
     if (index >= 0 && index < messagesModel.count)

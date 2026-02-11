@@ -4,6 +4,8 @@ import QtQuick.Controls
 import Quickshell.Io
 import qs.Commons
 import qs.Widgets
+import "lib/commands.js" as Commands
+import "lib/protocol.js" as Protocol
 
 Item {
   id: root
@@ -289,16 +291,7 @@ Item {
     root.pendingImageMediaType = ""
   }
 
-  function commandShouldOpen(text) {
-    if (!text)
-      return false
-    if (text.length < 1)
-      return false
-    if (text[0] !== "/")
-      return false
-    // Only while typing the command token (no whitespace yet).
-    return text.indexOf(" ") === -1 && text.indexOf("\t") === -1 && text.indexOf("\n") === -1
-  }
+  function commandShouldOpen(text) { return Commands.commandShouldOpen(text) }
 
   function rebuildCommandSuggestions(text) {
     if (!commandShouldOpen(text)) {
@@ -363,50 +356,10 @@ Item {
     }
   }
 
-  function _channelLabel(channelId) {
-    var meta = root.channelMeta
-    for (var i = 0; i < meta.length; i++) {
-      if (meta[i].id === channelId)
-        return meta[i].label || channelId
-    }
-    return channelId
-  }
-
-  function _channelHasUnread(channelId) {
-    var sessions = root.unreadSessions
-    for (var k in sessions) {
-      if (main && main._channelFromSessionKey(k) === channelId)
-        return true
-    }
-    return false
-  }
-
-  function _sessionDisplayName(sessionKey) {
-    // Session keys: "agent:<agentId>:<channel>[:<peer>...]"
-    // Examples: "agent:main:slack:channel:c0ae9n9jkkp", "agent:main:main"
-    var parts = (sessionKey || "").split(":")
-    if (parts.length >= 4 && parts[0] === "agent") {
-      // Has peer info after channel type — show it
-      return parts.slice(3).join(":")
-    }
-    if (parts.length === 3 && parts[0] === "agent") {
-      // e.g. "agent:main:main" — channel is the session itself
-      return parts[2]
-    }
-    if (parts.length >= 3)
-      return parts.slice(2).join(":")
-    if (parts.length >= 2)
-      return parts[1]
-    return sessionKey
-  }
-
-  function _breadcrumbText() {
-    if (root.viewMode === "sessions")
-      return _channelLabel(root.selectedChannelId)
-    if (root.viewMode === "chat")
-      return _channelLabel(root.selectedChannelId) + " \u203A " + _sessionDisplayName(root.activeSessionKey)
-    return "OpenClaw Chat"
-  }
+  function _channelLabel(channelId) { return Commands.channelLabel(channelId, root.channelMeta) }
+  function _channelHasUnread(channelId) { return Commands.channelHasUnread(channelId, root.unreadSessions, Protocol.channelFromSessionKey) }
+  function _sessionDisplayName(sessionKey) { return Commands.sessionDisplayName(sessionKey) }
+  function _breadcrumbText() { return Commands.breadcrumbText(root.viewMode, root.selectedChannelId, root.activeSessionKey, root.channelMeta) }
 
   function runSlashCommand(text) {
     var t = (text || "").trim()
