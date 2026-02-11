@@ -108,6 +108,7 @@ Item {
     }
     onExited: (exitCode, exitStatus) => {
       if (exitCode !== 0) {
+        clipboardTimeoutTimer.stop()
         root.isCapturingClipboard = false
         return
       }
@@ -121,11 +122,17 @@ Item {
         }
       }
       if (imageType) {
+        if (clipboardImageProcess.running) {
+          clipboardTimeoutTimer.stop()
+          root.isCapturingClipboard = false
+          return
+        }
         root.pendingImageMediaType = imageType
         root.pendingImageBase64 = ""
         clipboardImageProcess.command = ["bash", "-c", "wl-paste --type '" + imageType + "' | base64 -w0"]
         clipboardImageProcess.running = true
       } else {
+        clipboardTimeoutTimer.stop()
         root.isCapturingClipboard = false
       }
     }
@@ -137,14 +144,37 @@ Item {
     stdout: SplitParser {
       onRead: data => {
         root.pendingImageBase64 += data
+        // Abort if base64 data exceeds ~10 MB (decoded)
+        if (root.pendingImageBase64.length > 14000000) {
+          console.warn("[Claw] Clipboard image too large, aborting capture")
+          clipboardImageProcess.running = false
+          root.pendingImageBase64 = ""
+          root.pendingImageMediaType = ""
+        }
       }
     }
     onExited: (exitCode, exitStatus) => {
+      clipboardTimeoutTimer.stop()
       root.isCapturingClipboard = false
       if (exitCode !== 0) {
         root.pendingImageBase64 = ""
         root.pendingImageMediaType = ""
       }
+    }
+  }
+
+  // Clipboard capture timeout (10s) — kills hung wl-paste processes
+  Timer {
+    id: clipboardTimeoutTimer
+    interval: 10000
+    repeat: false
+    onTriggered: {
+      console.warn("[Claw] Clipboard capture timed out")
+      clipboardTypeProcess.running = false
+      clipboardImageProcess.running = false
+      root.isCapturingClipboard = false
+      root.pendingImageBase64 = ""
+      root.pendingImageMediaType = ""
     }
   }
 
@@ -250,6 +280,7 @@ Item {
       return
     root.isCapturingClipboard = true
     root._clipboardTypes = ""
+    clipboardTimeoutTimer.start()
     clipboardTypeProcess.running = true
   }
 

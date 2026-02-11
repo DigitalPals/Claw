@@ -99,6 +99,7 @@ Item {
 
   // Reconnection state
   property int _reconnectAttempts: 0
+  property bool _disconnecting: false
 
   // Tick keepalive interval from server (default 15s)
   property int _tickIntervalMs: 15000
@@ -263,6 +264,7 @@ Item {
                   "url:", ws.url, "errorString:", ws.errorString)
       if (ws.status === WebSocket.Open) {
         console.log("[Claw] WS open, starting handshake")
+        root._disconnecting = false
         root.setStatus("connecting", "")
         root._reconnectAttempts = 0
         // Start fallback timer in case server doesn't send connect.challenge
@@ -299,6 +301,7 @@ Item {
     repeat: false
     onTriggered: {
       if (!ws.active) {
+        root._disconnecting = false
         ws.url = root._pickSetting("wsUrl", root._defaultWsUrl)
         ws.active = true
       }
@@ -327,6 +330,11 @@ Item {
       frame = JSON.parse(raw)
     } catch (e) {
       console.warn("[Claw] Failed to parse frame:", e, raw.substring(0, 200))
+      return
+    }
+
+    if (!frame || typeof frame.type !== "string") {
+      console.warn("[Claw] Malformed frame (no type):", raw.substring(0, 200))
       return
     }
 
@@ -361,8 +369,7 @@ Item {
         var entry = root._pendingRequests[id]
         if (entry) {
           delete root._pendingRequests[id]
-          if (entry.timer)
-            entry.timer.destroy()
+          try { if (entry.timer) entry.timer.destroy() } catch(e) {}
           if (entry.callback)
             entry.callback({ ok: false, error: { message: "Request timed out: " + method } })
         }
@@ -400,8 +407,7 @@ Item {
     root._pendingRequests = pending
 
     if (entry.timer) {
-      entry.timer.stop()
-      entry.timer.destroy()
+      try { entry.timer.stop(); entry.timer.destroy() } catch(e) {}
     }
 
     if (entry.callback)
@@ -414,8 +420,7 @@ Item {
     for (var id in pending) {
       var entry = pending[id]
       if (entry.timer) {
-        entry.timer.stop()
-        entry.timer.destroy()
+        try { entry.timer.stop(); entry.timer.destroy() } catch(e) {}
       }
       if (entry.callback) {
         try {
@@ -504,6 +509,9 @@ Item {
   // ──────────────────────────────────────────────
 
   function _handleDisconnect(reason) {
+    if (root._disconnecting)
+      return
+    root._disconnecting = true
     console.log("[Claw] _handleDisconnect:", reason, "state:", root.connectionState, "ws.active:", ws.active)
     connectFallbackTimer.stop()
     tickTimer.stop()
@@ -520,7 +528,7 @@ Item {
     var autoReconnect = !!_pickSetting("autoReconnect", true)
     if (autoReconnect && ws.active) {
       ws.active = false
-      root._reconnectAttempts++
+      root._reconnectAttempts = Math.min(root._reconnectAttempts + 1, 20)
       var maxDelay = _pickSetting("reconnectMaxDelayMs", 30000)
       var delay = Math.min(1000 * Math.pow(2, root._reconnectAttempts - 1), maxDelay)
       root.setStatus("connecting", "Reconnecting in " + Math.round(delay / 1000) + "s...")
@@ -541,6 +549,7 @@ Item {
 
   function reconnect() {
     disconnect()
+    root._disconnecting = false
     root._reconnectAttempts = 0
     root.setStatus("connecting", "")
     var wsUrl = root._pickSetting("wsUrl", root._defaultWsUrl)
@@ -761,13 +770,7 @@ Item {
     }, function(res) {
       if (!res.ok) {
         var errMsg = (res.error && res.error.message) ? res.error.message : "Send failed"
-        if (root._activeAssistantIndex >= 0)
-          messagesModel.setProperty(root._activeAssistantIndex, "streaming", false)
-        setMessageContent(root._activeAssistantIndex, "Error: " + errMsg)
-        root.isSending = false
-        root._activeAssistantIndex = -1
-        root._activeAssistantText = ""
-        _maybeNotifyResponse(errMsg, true)
+        _handleSendError(errMsg)
       }
       // On success, streaming events will arrive via chat events
     }, 300000)
@@ -801,13 +804,7 @@ Item {
     }, function(res) {
       if (!res.ok) {
         var errMsg = (res.error && res.error.message) ? res.error.message : "Send failed"
-        if (root._activeAssistantIndex >= 0)
-          messagesModel.setProperty(root._activeAssistantIndex, "streaming", false)
-        setMessageContent(root._activeAssistantIndex, "Error: " + errMsg)
-        root.isSending = false
-        root._activeAssistantIndex = -1
-        root._activeAssistantText = ""
-        _maybeNotifyResponse(errMsg, true)
+        _handleSendError(errMsg)
       }
       // On success, streaming events will arrive via chat events
     }, 300000)
@@ -824,6 +821,8 @@ Item {
   // ──────────────────────────────────────────────
 
   function _extractTextFromContent(content) {
+    if (content == null)
+      return ""
     if (typeof content === "string")
       return content
     if (Array.isArray(content)) {
@@ -836,6 +835,24 @@ Item {
       return parts.join("\n")
     }
     return ""
+  }
+
+  function _finishStreaming(index) {
+    if (index >= 0 && index < messagesModel.count)
+      messagesModel.setProperty(index, "streaming", false)
+  }
+
+  function _endStreaming() {
+    root.isSending = false
+    root._activeAssistantIndex = -1
+    root._activeAssistantText = ""
+  }
+
+  function _handleSendError(errMsg) {
+    _finishStreaming(root._activeAssistantIndex)
+    setMessageContent(root._activeAssistantIndex, "Error: " + errMsg)
+    _endStreaming()
+    _maybeNotifyResponse(errMsg, true)
   }
 
   function _handleChatEvent(payload) {
@@ -853,38 +870,26 @@ Item {
         }
       } else if (state === "final") {
         var finalText = text || root._activeAssistantText
-        if (root._activeAssistantIndex >= 0) {
-          messagesModel.setProperty(root._activeAssistantIndex, "streaming", false)
-          setMessageContent(root._activeAssistantIndex, finalText || "(empty response)")
-        }
+        _finishStreaming(root._activeAssistantIndex)
+        setMessageContent(root._activeAssistantIndex, finalText || "(empty response)")
         _maybeNotifyResponse(finalText, false)
-        root.isSending = false
-        root._activeAssistantIndex = -1
-        root._activeAssistantText = ""
+        _endStreaming()
       } else if (state === "aborted") {
-        if (root._activeAssistantIndex >= 0) {
-          messagesModel.setProperty(root._activeAssistantIndex, "streaming", false)
-          var abortedText = root._activeAssistantText || ""
-          if (abortedText)
-            setMessageContent(root._activeAssistantIndex, abortedText + "\n\n(aborted)")
-          else
-            setMessageContent(root._activeAssistantIndex, "(aborted)")
-        }
-        root.isSending = false
-        root._activeAssistantIndex = -1
-        root._activeAssistantText = ""
+        _finishStreaming(root._activeAssistantIndex)
+        var abortedText = root._activeAssistantText || ""
+        if (abortedText)
+          setMessageContent(root._activeAssistantIndex, abortedText + "\n\n(aborted)")
+        else
+          setMessageContent(root._activeAssistantIndex, "(aborted)")
+        _endStreaming()
       } else if (state === "error") {
         var errMsg = (payload.error && typeof payload.error === "string") ? payload.error
           : (payload.error && payload.error.message) ? payload.error.message
           : "Unknown error"
-        if (root._activeAssistantIndex >= 0) {
-          messagesModel.setProperty(root._activeAssistantIndex, "streaming", false)
-          setMessageContent(root._activeAssistantIndex, "Error: " + errMsg)
-        }
+        _finishStreaming(root._activeAssistantIndex)
+        setMessageContent(root._activeAssistantIndex, "Error: " + errMsg)
         _maybeNotifyResponse(errMsg, true)
-        root.isSending = false
-        root._activeAssistantIndex = -1
-        root._activeAssistantText = ""
+        _endStreaming()
       }
       return
     }
