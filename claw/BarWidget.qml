@@ -57,8 +57,7 @@ Rectangle {
 
       NIcon {
         id: iconItem
-        // Tabler icon name; "crab" is lobster-ish.
-        icon: "crab"
+        icon: "message-chatbot"
         color: Color.mOnSurface
       }
 
