@@ -25,10 +25,11 @@ Item {
   property alias messagesModel: messagesModel
 
   // Channel/session navigation state
-  property var channelMeta: []          // from channels.status
+  property var channelMeta: []          // unified: configured + virtual channels
   property var channelOrder: []
   property var channelAccounts: ({})
-  property var sessionsList: []          // from sessions.list
+  property var allSessions: []          // all sessions from sessions.list
+  property var sessionsList: []          // filtered for selected channel
   property string viewMode: "channels"   // "channels" | "sessions" | "chat"
   property string selectedChannelId: ""
   property string activeSessionKey: ""
@@ -174,7 +175,7 @@ Item {
     }
 
     onTextMessageReceived: function(message) {
-      console.log("[Claw] WS recv:", message.substring(0, 200))
+      console.log("[Claw] WS recv:", message.substring(0, 500))
       root._dispatchFrame(message)
     }
   }
@@ -432,28 +433,130 @@ Item {
   // Channel / Session API
   // ──────────────────────────────────────────────
 
+  // Extract the channel type from a session key.
+  // Format: "agent:<agentId>:<channelType>[:<peer>...]"
+  function _channelFromSessionKey(sessionKey) {
+    var parts = (sessionKey || "").split(":")
+    if (parts.length >= 3 && parts[0] === "agent")
+      return parts[2]
+    if (parts.length >= 2)
+      return parts[1]
+    return ""
+  }
+
+  function _virtualChannelLabel(channelType) {
+    if (channelType === "main") return "Main (Direct)"
+    if (channelType === "webchat") return "Web Chat"
+    return channelType.charAt(0).toUpperCase() + channelType.slice(1)
+  }
+
+  function _virtualChannelIcon(channelType) {
+    if (channelType === "main") return "terminal-2"
+    if (channelType === "webchat") return "world"
+    return "message-circle"
+  }
+
   function fetchChannels() {
     _sendRequest("channels.status", {}, function(res) {
       if (!res.ok)
         return
 
       var payload = res.payload || {}
-      root.channelMeta = payload.channelMeta || []
-      root.channelOrder = payload.channelOrder || []
+      var order = payload.channelOrder || []
+      root.channelOrder = order
       root.channelAccounts = payload.channelAccounts || {}
+
+      // Prefer server-provided channelMeta array; fall back to building from maps
+      var configuredMeta = payload.channelMeta || []
+      if (configuredMeta.length === 0 && order.length > 0) {
+        var labels = payload.channelLabels || {}
+        var detailLabels = payload.channelDetailLabels || {}
+        var images = payload.channelSystemImages || {}
+        for (var i = 0; i < order.length; i++) {
+          var cid = order[i]
+          configuredMeta.push({
+            id: cid,
+            label: labels[cid] || cid,
+            detailLabel: detailLabels[cid] || "",
+            systemImage: images[cid] || "message-circle"
+          })
+        }
+      }
+
+      // Also fetch all sessions to discover virtual channels
+      _sendRequest("sessions.list", {}, function(sessRes) {
+        var sessions = []
+        if (sessRes.ok)
+          sessions = (sessRes.payload || {}).sessions || []
+        root.allSessions = sessions
+
+        // Build set of configured channel IDs
+        var configuredIds = {}
+        for (var ci = 0; ci < configuredMeta.length; ci++)
+          configuredIds[configuredMeta[ci].id] = true
+
+        // Discover virtual channels from session data
+        var virtualMap = {}
+        for (var j = 0; j < sessions.length; j++) {
+          var s = sessions[j]
+          var ch = s.channel || _channelFromSessionKey(s.key || "")
+          if (ch && !configuredIds[ch] && !virtualMap[ch])
+            virtualMap[ch] = true
+        }
+
+        // Build unified channel list: configured first, then virtual
+        var unified = []
+        for (var k = 0; k < configuredMeta.length; k++)
+          unified.push(configuredMeta[k])
+        for (var vch in virtualMap) {
+          unified.push({
+            id: vch,
+            label: _virtualChannelLabel(vch),
+            detailLabel: "",
+            systemImage: _virtualChannelIcon(vch),
+            virtual: true
+          })
+        }
+
+        root.channelMeta = unified
+        console.log("[Claw] fetchChannels: " + unified.length + " channels (" + configuredMeta.length + " configured, " + Object.keys(virtualMap).length + " virtual), " + sessions.length + " total sessions")
+      }, 10000)
     }, 10000)
   }
 
-  function fetchSessions(channelId) {
-    var params = {}
-    if (channelId)
-      params.channelId = channelId
+  function _filterSessionsForChannel(channelId) {
+    var filtered = []
+    for (var i = 0; i < root.allSessions.length; i++) {
+      var s = root.allSessions[i]
+      // Prefer the explicit channel field; fall back to parsing the key
+      var sCh = s.channel || _channelFromSessionKey(s.key || "")
+      if (sCh === channelId)
+        filtered.push(s)
+    }
+    return filtered
+  }
 
-    _sendRequest("sessions.list", params, function(res) {
+  function fetchSessions(channelId) {
+    // First, filter from cached allSessions for immediate display
+    var cached = _filterSessionsForChannel(channelId)
+    root.sessionsList = cached
+    console.log("[Claw] fetchSessions(" + channelId + "): " + cached.length + " cached from " + root.allSessions.length + " total")
+
+    // Then refresh from server
+    _sendRequest("sessions.list", {}, function(res) {
       if (!res.ok)
         return
-      var payload = res.payload || {}
-      root.sessionsList = payload.sessions || []
+      var sessions = (res.payload || {}).sessions || []
+      root.allSessions = sessions
+      // Log first session to see field names
+      if (sessions.length > 0)
+        console.log("[Claw] sessions[0] keys: " + JSON.stringify(Object.keys(sessions[0])) + " sample: " + JSON.stringify(sessions[0]).substring(0, 200))
+      // Re-filter if still viewing this channel
+      if (root.selectedChannelId === channelId) {
+        var filtered = _filterSessionsForChannel(channelId)
+        root.sessionsList = filtered
+        console.log("[Claw] fetchSessions(" + channelId + ") refreshed: " + filtered.length + " sessions")
+      }
     }, 10000)
   }
 

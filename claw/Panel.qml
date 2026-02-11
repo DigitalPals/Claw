@@ -269,8 +269,17 @@ Item {
   }
 
   function _sessionDisplayName(sessionKey) {
-    // Session keys look like "main:whatsapp:+15555550123"
+    // Session keys: "agent:<agentId>:<channel>[:<peer>...]"
+    // Examples: "agent:main:slack:channel:c0ae9n9jkkp", "agent:main:main"
     var parts = (sessionKey || "").split(":")
+    if (parts.length >= 4 && parts[0] === "agent") {
+      // Has peer info after channel type — show it
+      return parts.slice(3).join(":")
+    }
+    if (parts.length === 3 && parts[0] === "agent") {
+      // e.g. "agent:main:main" — channel is the session itself
+      return parts[2]
+    }
     if (parts.length >= 3)
       return parts.slice(2).join(":")
     if (parts.length >= 2)
@@ -762,17 +771,16 @@ Item {
                   spacing: 2
 
                   NText {
-                    text: root._sessionDisplayName(modelData.sessionKey || modelData.key || "")
+                    text: modelData.displayName || root._sessionDisplayName(modelData.key || "")
                     color: Color.mOnSurface
                     font.weight: Font.DemiBold
                     pointSize: Style.fontSizeM
                   }
 
                   NText {
-                    text: modelData.label || ""
+                    text: modelData.key || ""
                     color: Color.mOnSurfaceVariant
                     pointSize: Style.fontSizeS
-                    visible: !!(modelData.label)
                   }
                 }
 
@@ -787,7 +795,7 @@ Item {
                 anchors.fill: parent
                 hoverEnabled: true
                 onClicked: {
-                  var key = modelData.sessionKey || modelData.key || ""
+                  var key = modelData.key || ""
                   if (main && main.selectSession && key)
                     main.selectSession(key)
                 }
