@@ -192,7 +192,7 @@ Item {
       } catch (e0) {}
     }
 
-    var title = "Claw"
+    var title = "OpenClaw Chat"
     var body = _truncateForToast(text || "", 180)
     if (!body)
       body = isError ? "Request failed" : "Response received"
