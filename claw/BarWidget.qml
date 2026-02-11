@@ -31,9 +31,6 @@ Rectangle {
   border.width: 1
   border.color: Style.capsuleBorderColor
 
-  // Single indicator:
-  // - Theme primary when there's an unread response.
-  // - Otherwise green/red/neutral based on connection state.
   readonly property color statusIndicatorColor: {
     if (root.hasUnread)
       return (Color.mPrimary !== undefined) ? Color.mPrimary : "#2196F3"

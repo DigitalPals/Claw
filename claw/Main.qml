@@ -19,7 +19,8 @@ Item {
   property bool isSending: false
   property bool panelActive: false
   property bool panelAtBottom: false
-  property bool hasUnread: false
+  property var unreadSessions: ({})
+  readonly property bool hasUnread: Object.keys(unreadSessions).length > 0
 
   // Keep chat in memory across panel open/close.
   property alias messagesModel: messagesModel
@@ -112,7 +113,7 @@ Item {
   }
 
   function markRead() {
-    root.hasUnread = false
+    _clearSessionUnread(root.activeSessionKey)
   }
 
   function clearMessages() {
@@ -121,9 +122,52 @@ Item {
 
   function clearChat() {
     clearMessages()
-    root.hasUnread = false
+    _clearSessionUnread(root.activeSessionKey)
     root._activeAssistantIndex = -1
     root._activeAssistantText = ""
+  }
+
+  function _markSessionUnread(sessionKey) {
+    if (!sessionKey)
+      return
+    var old = root.unreadSessions
+    if (old[sessionKey])
+      return
+    var fresh = {}
+    for (var k in old)
+      fresh[k] = true
+    fresh[sessionKey] = true
+    root.unreadSessions = fresh
+  }
+
+  function _clearSessionUnread(sessionKey) {
+    if (!sessionKey)
+      return
+    var old = root.unreadSessions
+    if (!old[sessionKey])
+      return
+    var fresh = {}
+    for (var k in old) {
+      if (k !== sessionKey)
+        fresh[k] = true
+    }
+    root.unreadSessions = fresh
+  }
+
+  function _clearChannelSessions(channelId) {
+    if (!channelId)
+      return
+    var old = root.unreadSessions
+    var fresh = {}
+    var changed = false
+    for (var k in old) {
+      if (_channelFromSessionKey(k) === channelId)
+        changed = true
+      else
+        fresh[k] = true
+    }
+    if (changed)
+      root.unreadSessions = fresh
   }
 
   function appendMessage(role, content, contentBlocks) {
@@ -142,7 +186,7 @@ Item {
       return
     messagesModel.setProperty(index, "content", content)
     if (!root.panelActive || !root.panelAtBottom)
-      root.hasUnread = true
+      _markSessionUnread(root.activeSessionKey)
   }
 
   ListModel {
@@ -768,54 +812,67 @@ Item {
 
   function _handleChatEvent(payload) {
     var sessionKey = payload.sessionKey || ""
-    // Only handle events for the active session
-    if (sessionKey !== root.activeSessionKey)
-      return
-
     var state = payload.state || ""
     var message = payload.message || {}
     var text = _extractTextFromContent(message.content)
 
-    if (state === "delta") {
-      // Delta events carry accumulated full text in message.content
-      if (root._activeAssistantIndex >= 0) {
-        root._activeAssistantText = text
-        setMessageContent(root._activeAssistantIndex, text || "...")
+    // Active session: handle streaming UI as before
+    if (sessionKey === root.activeSessionKey) {
+      if (state === "delta") {
+        if (root._activeAssistantIndex >= 0) {
+          root._activeAssistantText = text
+          setMessageContent(root._activeAssistantIndex, text || "...")
+        }
+      } else if (state === "final") {
+        var finalText = text || root._activeAssistantText
+        if (root._activeAssistantIndex >= 0) {
+          messagesModel.setProperty(root._activeAssistantIndex, "streaming", false)
+          setMessageContent(root._activeAssistantIndex, finalText || "(empty response)")
+        }
+        _maybeNotifyResponse(finalText, false)
+        root.isSending = false
+        root._activeAssistantIndex = -1
+        root._activeAssistantText = ""
+      } else if (state === "aborted") {
+        if (root._activeAssistantIndex >= 0) {
+          messagesModel.setProperty(root._activeAssistantIndex, "streaming", false)
+          var abortedText = root._activeAssistantText || ""
+          if (abortedText)
+            setMessageContent(root._activeAssistantIndex, abortedText + "\n\n(aborted)")
+          else
+            setMessageContent(root._activeAssistantIndex, "(aborted)")
+        }
+        root.isSending = false
+        root._activeAssistantIndex = -1
+        root._activeAssistantText = ""
+      } else if (state === "error") {
+        var errMsg = (payload.error && typeof payload.error === "string") ? payload.error
+          : (payload.error && payload.error.message) ? payload.error.message
+          : "Unknown error"
+        if (root._activeAssistantIndex >= 0) {
+          messagesModel.setProperty(root._activeAssistantIndex, "streaming", false)
+          setMessageContent(root._activeAssistantIndex, "Error: " + errMsg)
+        }
+        _maybeNotifyResponse(errMsg, true)
+        root.isSending = false
+        root._activeAssistantIndex = -1
+        root._activeAssistantText = ""
       }
-    } else if (state === "final") {
-      var finalText = text || root._activeAssistantText
-      if (root._activeAssistantIndex >= 0) {
-        messagesModel.setProperty(root._activeAssistantIndex, "streaming", false)
-        setMessageContent(root._activeAssistantIndex, finalText || "(empty response)")
+      return
+    }
+
+    // Non-active session: mark session unread on final/error (not delta to avoid spam)
+    if (state === "final" || state === "error") {
+      _markSessionUnread(sessionKey)
+
+      if (state === "error") {
+        var bgErrMsg = (payload.error && typeof payload.error === "string") ? payload.error
+          : (payload.error && payload.error.message) ? payload.error.message
+          : "Unknown error"
+        _maybeNotifyResponse(bgErrMsg, true)
+      } else {
+        _maybeNotifyResponse(text, false)
       }
-      _maybeNotifyResponse(finalText, false)
-      root.isSending = false
-      root._activeAssistantIndex = -1
-      root._activeAssistantText = ""
-    } else if (state === "aborted") {
-      if (root._activeAssistantIndex >= 0) {
-        messagesModel.setProperty(root._activeAssistantIndex, "streaming", false)
-        var abortedText = root._activeAssistantText || ""
-        if (abortedText)
-          setMessageContent(root._activeAssistantIndex, abortedText + "\n\n(aborted)")
-        else
-          setMessageContent(root._activeAssistantIndex, "(aborted)")
-      }
-      root.isSending = false
-      root._activeAssistantIndex = -1
-      root._activeAssistantText = ""
-    } else if (state === "error") {
-      var errMsg = (payload.error && typeof payload.error === "string") ? payload.error
-        : (payload.error && payload.error.message) ? payload.error.message
-        : "Unknown error"
-      if (root._activeAssistantIndex >= 0) {
-        messagesModel.setProperty(root._activeAssistantIndex, "streaming", false)
-        setMessageContent(root._activeAssistantIndex, "Error: " + errMsg)
-      }
-      _maybeNotifyResponse(errMsg, true)
-      root.isSending = false
-      root._activeAssistantIndex = -1
-      root._activeAssistantText = ""
     }
   }
 
@@ -834,7 +891,7 @@ Item {
     root.activeSessionKey = sessionKey
     root.viewMode = "chat"
     clearMessages()
-    root.hasUnread = false
+    _clearSessionUnread(sessionKey)
     root._activeAssistantIndex = -1
     root._activeAssistantText = ""
 

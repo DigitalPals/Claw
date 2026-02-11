@@ -42,6 +42,7 @@ Item {
   readonly property string lastErrorText: main ? (main.lastErrorText || "") : ""
   readonly property bool hasUnread: main ? !!main.hasUnread : false
   readonly property string connectionState: main ? (main.connectionState || "idle") : "idle"
+  readonly property var unreadSessions: main ? (main.unreadSessions || ({})) : ({})
 
   // Navigation bindings from Main
   readonly property string viewMode: main ? (main.viewMode || "channels") : "channels"
@@ -337,6 +338,15 @@ Item {
         return meta[i].label || channelId
     }
     return channelId
+  }
+
+  function _channelHasUnread(channelId) {
+    var sessions = root.unreadSessions
+    for (var k in sessions) {
+      if (main && main._channelFromSessionKey(k) === channelId)
+        return true
+    }
+    return false
   }
 
   function _sessionDisplayName(sessionKey) {
@@ -798,7 +808,7 @@ Item {
                     Layout.fillWidth: true
                     text: modelData.label || modelData.id || "Channel"
                     color: Color.mOnSurface
-                    font.weight: Font.DemiBold
+                    font.weight: root._channelHasUnread(modelData.id) ? Font.ExtraBold : Font.DemiBold
                     pointSize: Style.fontSizeM
                   }
 
@@ -809,6 +819,16 @@ Item {
                     pointSize: Style.fontSizeS
                     visible: !!(modelData.detailLabel)
                   }
+                }
+
+                // Unread indicator dot
+                Rectangle {
+                  width: 8 * Style.uiScaleRatio
+                  height: width
+                  radius: width / 2
+                  color: (Color.mPrimary !== undefined) ? Color.mPrimary : "#2196F3"
+                  visible: root._channelHasUnread(modelData.id)
+                  Layout.alignment: Qt.AlignVCenter
                 }
 
                 NIcon {
@@ -877,25 +897,39 @@ Item {
 
                 ColumnLayout {
                   Layout.fillWidth: true
+                  Layout.alignment: Qt.AlignVCenter
                   spacing: 2
 
                   NText {
+                    Layout.fillWidth: true
                     text: modelData.displayName || root._sessionDisplayName(modelData.key || "")
                     color: Color.mOnSurface
-                    font.weight: Font.DemiBold
+                    font.weight: root.unreadSessions[modelData.key] ? Font.ExtraBold : Font.DemiBold
                     pointSize: Style.fontSizeM
                   }
 
                   NText {
+                    Layout.fillWidth: true
                     text: modelData.key || ""
                     color: Color.mOnSurfaceVariant
                     pointSize: Style.fontSizeS
                   }
                 }
 
+                // Unread indicator dot
+                Rectangle {
+                  width: 8 * Style.uiScaleRatio
+                  height: width
+                  radius: width / 2
+                  color: (Color.mPrimary !== undefined) ? Color.mPrimary : "#2196F3"
+                  visible: !!root.unreadSessions[modelData.key]
+                  Layout.alignment: Qt.AlignVCenter
+                }
+
                 NIcon {
                   icon: "chevron-right"
                   color: Color.mOnSurfaceVariant
+                  Layout.alignment: Qt.AlignVCenter
                 }
               }
 
