@@ -38,20 +38,22 @@ Item {
   // UI state
   property bool showSettings: false
   readonly property bool isSending: main ? !!main.isSending : false
-  readonly property string lastErrorText: main ? (main.lastRequestErrorText || "") : ""
-  readonly property int lastHttpStatus: main ? (main.lastRequestHttpStatus || 0) : 0
+  readonly property string lastErrorText: main ? (main.lastErrorText || "") : ""
   readonly property bool hasUnread: main ? !!main.hasUnread : false
   readonly property string connectionState: main ? (main.connectionState || "idle") : "idle"
 
+  // Navigation bindings from Main
+  readonly property string viewMode: main ? (main.viewMode || "channels") : "channels"
+  readonly property var channelMeta: main ? (main.channelMeta || []) : []
+  readonly property var sessionsList: main ? (main.sessionsList || []) : []
+  readonly property string activeSessionKey: main ? (main.activeSessionKey || "") : ""
+  readonly property string selectedChannelId: main ? (main.selectedChannelId || "") : ""
+
   // Local editable settings (used at runtime; Save persists).
-  property string editGatewayUrl: "http://127.0.0.1:18789"
+  property string editWsUrl: "ws://127.0.0.1:18789"
   property string editToken: ""
   property string editAgentId: "main"
-  property string editUser: "noctalia:claw"
-  property string editSessionKey: ""
-  property bool editStream: true
-  property bool openAiEndpointEnabledHint: true
-  property int requestTimeoutMs: 60000
+  property bool editAutoReconnect: true
   property bool editNotifyOnResponse: true
   property bool editNotifyOnlyWhenAppInactive: true
 
@@ -60,8 +62,6 @@ Item {
   property int commandSelectedIndex: 0
 
   // Command suggestions for the autocomplete dropdown.
-  // Gateway commands are sent as regular messages; the gateway processes them server-side.
-  // Client-only commands (settings, stream, agent) are handled locally.
   readonly property var commands: ([
     { name: "new", template: "/new", hasArgs: false, usage: "", rank: 10, description: "Reset session / start new chat." },
     { name: "help", template: "/help", hasArgs: false, usage: "", rank: 20, description: "Show available commands." },
@@ -73,8 +73,9 @@ Item {
     { name: "compact", template: "/compact", hasArgs: false, usage: "", rank: 80, description: "Compact message history." },
     { name: "verbose", template: "/verbose ", hasArgs: true, usage: "on|full|off", rank: 90, description: "Control verbosity." },
     { name: "settings", template: "/settings", hasArgs: false, usage: "", rank: 200, description: "[Local] Toggle the in-panel settings." },
-    { name: "stream", template: "/stream ", hasArgs: true, usage: "on|off", rank: 210, description: "[Local] Enable/disable SSE streaming." },
-    { name: "agent", template: "/agent ", hasArgs: true, usage: "<id>", rank: 220, description: "[Local] Set agent id for routing." }
+    { name: "channels", template: "/channels", hasArgs: false, usage: "", rank: 210, description: "[Local] Navigate to channels view." },
+    { name: "abort", template: "/abort", hasArgs: false, usage: "", rank: 220, description: "[Local] Abort active response." },
+    { name: "agent", template: "/agent ", hasArgs: true, usage: "<id>", rank: 230, description: "[Local] Set agent id for routing." }
   ])
 
   // Local components
@@ -108,14 +109,10 @@ Item {
   }
 
   function reloadFromSettings() {
-    root.editGatewayUrl = pickSetting("gatewayUrl", "http://127.0.0.1:18789")
+    root.editWsUrl = pickSetting("wsUrl", "ws://127.0.0.1:18789")
     root.editToken = pickSetting("token", "")
     root.editAgentId = pickSetting("agentId", "main")
-    root.editUser = pickSetting("user", "noctalia:claw")
-    root.editSessionKey = pickSetting("sessionKey", "")
-    root.editStream = !!pickSetting("stream", true)
-    root.openAiEndpointEnabledHint = !!pickSetting("openAiEndpointEnabledHint", true)
-    root.requestTimeoutMs = pickSetting("requestTimeoutMs", 60000)
+    root.editAutoReconnect = !!pickSetting("autoReconnect", true)
     root.editNotifyOnResponse = !!pickSetting("notifyOnResponse", true)
     root.editNotifyOnlyWhenAppInactive = !!pickSetting("notifyOnlyWhenAppInactive", true)
   }
@@ -154,7 +151,6 @@ Item {
       return
 
     pluginApi.pluginSettings.agentId = root.editAgentId
-    pluginApi.pluginSettings.stream = root.editStream
     pluginApi.saveSettings()
   }
 
@@ -163,10 +159,6 @@ Item {
       main.clearChat()
     else
       msgModel().clear()
-  }
-
-  function _trimTrailingSlashes(s) {
-    return (s || "").replace(/\/+$/, "")
   }
 
   function _appendMessage(role, content) {
@@ -191,18 +183,6 @@ Item {
 
     if (!root.userScrolledUp)
       _scrollToEnd()
-  }
-
-  function _buildOutgoingMessages(newUserText) {
-    var arr = []
-    var model = msgModel()
-    for (var i = 0; i < model.count; i++) {
-      var m = model.get(i)
-      if (m.role === "system" || m.role === "user" || m.role === "assistant")
-        arr.push({ role: m.role, content: m.content })
-    }
-    arr.push({ role: "user", content: newUserText })
-    return arr
   }
 
   function commandShouldOpen(text) {
@@ -270,9 +250,6 @@ Item {
     if (composerInput.cursorPosition !== undefined)
       composerInput.cursorPosition = composerInput.text.length
 
-    // No-arg commands match their own prefix forever, so close the menu
-    // immediately. Arg commands (template ends with space) will close once
-    // rebuildCommandSuggestions sees whitespace.
     if (!row.hasArgs) {
       root.commandMenuOpen = false
       commandSuggestionsModel.clear()
@@ -280,6 +257,33 @@ Item {
     } else {
       rebuildCommandSuggestions(composerInput.text)
     }
+  }
+
+  function _channelLabel(channelId) {
+    var meta = root.channelMeta
+    for (var i = 0; i < meta.length; i++) {
+      if (meta[i].id === channelId)
+        return meta[i].label || channelId
+    }
+    return channelId
+  }
+
+  function _sessionDisplayName(sessionKey) {
+    // Session keys look like "main:whatsapp:+15555550123"
+    var parts = (sessionKey || "").split(":")
+    if (parts.length >= 3)
+      return parts.slice(2).join(":")
+    if (parts.length >= 2)
+      return parts[1]
+    return sessionKey
+  }
+
+  function _breadcrumbText() {
+    if (root.viewMode === "sessions")
+      return "Claw \u203A " + _channelLabel(root.selectedChannelId)
+    if (root.viewMode === "chat")
+      return "Claw \u203A " + _channelLabel(root.selectedChannelId) + " \u203A " + _sessionDisplayName(root.activeSessionKey)
+    return "Claw"
   }
 
   function runSlashCommand(text) {
@@ -299,25 +303,21 @@ Item {
       return true
     }
 
-    if (cmd === "stream") {
-      if (args.length < 1) {
-        appendSystemMessage("Usage: /stream on|off")
-        return true
+    if (cmd === "channels") {
+      if (main && main.viewMode !== "channels") {
+        // Navigate all the way back to channels
+        main.viewMode = "channels"
+        main.selectedChannelId = ""
+        main.activeSessionKey = ""
+        main.sessionsList = []
+        main.clearMessages()
       }
-      var v = (args[0] || "").toLowerCase()
-      if (v === "on" || v === "true" || v === "1") {
-        root.editStream = true
-        saveSettingsPartial()
-        appendSystemMessage("Streaming enabled.")
-        return true
-      }
-      if (v === "off" || v === "false" || v === "0") {
-        root.editStream = false
-        saveSettingsPartial()
-        appendSystemMessage("Streaming disabled.")
-        return true
-      }
-      appendSystemMessage("Usage: /stream on|off")
+      return true
+    }
+
+    if (cmd === "abort") {
+      if (main && root.activeSessionKey)
+        main.abortChat(root.activeSessionKey)
       return true
     }
 
@@ -341,7 +341,6 @@ Item {
 
     if (cmd === "new" || cmd === "clear") {
       clearChat()
-      // Fall through to send to gateway so the server resets its session too.
       return false
     }
 
@@ -404,7 +403,7 @@ Item {
     if (!text)
       return
 
-    // Client-only slash commands (settings, stream, agent) are handled locally.
+    // Client-only slash commands (settings, channels, abort, agent) are handled locally.
     // All other /commands fall through and are sent to the gateway.
     if (text[0] === "/") {
       var handled = runSlashCommand(text)
@@ -417,21 +416,11 @@ Item {
 
     root.userScrolledUp = false
     composerInput.text = ""
-    if (pluginApi && pluginApi.mainInstance && pluginApi.mainInstance.sendUserText) {
-      pluginApi.mainInstance.sendUserText(text, {
-        gatewayUrl: root.editGatewayUrl,
-        token: root.editToken,
-        agentId: root.editAgentId,
-        user: root.editUser,
-        sessionKey: root.editSessionKey,
-        stream: root.editStream,
-        openAiEndpointEnabledHint: root.openAiEndpointEnabledHint,
-        requestTimeoutMs: root.requestTimeoutMs,
-        notifyOnResponse: root.editNotifyOnResponse,
-        notifyOnlyWhenAppInactive: root.editNotifyOnlyWhenAppInactive
-      })
+
+    if (main && root.activeSessionKey) {
+      main.sendChat(root.activeSessionKey, text)
     } else {
-      // Fallback: keep history in view if main instance doesn't provide request handling.
+      // Fallback: keep history in view if no active session
       _appendMessage("user", text)
     }
   }
@@ -466,12 +455,22 @@ Item {
             anchors.margins: Style.marginS
             spacing: Style.marginM
 
+            NIconButton {
+              icon: "arrow-left"
+              visible: root.viewMode !== "channels"
+              onClicked: {
+                if (main && main.navigateBack)
+                  main.navigateBack()
+              }
+            }
+
             NText {
-              text: "Claw"
+              text: root._breadcrumbText()
               pointSize: Style.fontSizeL
               font.weight: Font.Bold
               color: Color.mOnSurface
               Layout.fillWidth: true
+              elide: Text.ElideRight
             }
 
             Rectangle {
@@ -479,10 +478,10 @@ Item {
               height: width
               radius: width / 2
               color: {
-                // Single indicator behavior: unread overrides status color.
                 if (root.hasUnread)
                   return (Color.mPrimary !== undefined) ? Color.mPrimary : "#2196F3"
-                if (root.connectionState === "ok") return "#4CAF50"
+                if (root.connectionState === "connected") return "#4CAF50"
+                if (root.connectionState === "connecting") return "#FFA726"
                 if (root.connectionState === "error") return "#F44336"
                 return Color.mOutline
               }
@@ -510,7 +509,6 @@ Item {
         radius: Style.radiusL
         visible: root.showSettings
 
-        // Rectangle doesn't auto-size to its children; give it an implicit height.
         implicitHeight: settingsLayout.implicitHeight + Style.marginM * 2
 
         ColumnLayout {
@@ -531,16 +529,16 @@ Item {
 
           NTextInput {
             Layout.fillWidth: true
-            label: "Gateway URL"
-            description: "Example: http://127.0.0.1:18789"
-            text: root.editGatewayUrl
-            onTextChanged: root.editGatewayUrl = text
+            label: "WebSocket URL"
+            description: "Example: ws://127.0.0.1:18789"
+            text: root.editWsUrl
+            onTextChanged: root.editWsUrl = text
           }
 
           NLabel {
             Layout.fillWidth: true
             label: "Token"
-            description: "Sent as Authorization: Bearer <token|password>. Do not expose the gateway unauthenticated."
+            description: "Sent during WebSocket handshake. Do not expose the gateway unauthenticated."
           }
 
           TextField {
@@ -554,33 +552,17 @@ Item {
           NTextInput {
             Layout.fillWidth: true
             label: "Agent ID"
-            description: "Sent as x-openclaw-agent-id. Also used as model openclaw:<agentId>"
+            description: "Agent used for routing chat messages."
             text: root.editAgentId
             onTextChanged: root.editAgentId = text
           }
 
-          NTextInput {
-            Layout.fillWidth: true
-            label: "User"
-            description: "OpenAI 'user' field for stable sessions. Default: noctalia:claw"
-            text: root.editUser
-            onTextChanged: root.editUser = text
-          }
-
-          NTextInput {
-            Layout.fillWidth: true
-            label: "Session Key (optional)"
-            description: "If set, sent as x-openclaw-session-key"
-            text: root.editSessionKey
-            onTextChanged: root.editSessionKey = text
-          }
-
           NToggle {
             Layout.fillWidth: true
-            label: "Stream responses (SSE)"
-            description: "Token-by-token feel when supported. Auto-falls back to non-streaming if needed."
-            checked: root.editStream
-            onCheckedChanged: root.editStream = checked
+            label: "Auto-reconnect"
+            description: "Automatically reconnect with exponential backoff on disconnect."
+            checked: root.editAutoReconnect
+            onCheckedChanged: root.editAutoReconnect = checked
           }
 
           NToggle {
@@ -610,15 +592,17 @@ Item {
                 if (!root.pluginApi)
                   return
 
-                root.pluginApi.pluginSettings.gatewayUrl = root.editGatewayUrl
+                root.pluginApi.pluginSettings.wsUrl = root.editWsUrl
                 root.pluginApi.pluginSettings.token = root.editToken
                 root.pluginApi.pluginSettings.agentId = root.editAgentId
-                root.pluginApi.pluginSettings.user = root.editUser
-                root.pluginApi.pluginSettings.sessionKey = root.editSessionKey
-                root.pluginApi.pluginSettings.stream = root.editStream
+                root.pluginApi.pluginSettings.autoReconnect = root.editAutoReconnect
                 root.pluginApi.pluginSettings.notifyOnResponse = root.editNotifyOnResponse
                 root.pluginApi.pluginSettings.notifyOnlyWhenAppInactive = root.editNotifyOnlyWhenAppInactive
                 root.pluginApi.saveSettings()
+
+                // Trigger reconnect with new settings
+                if (main && main.reconnect)
+                  main.reconnect()
               }
             }
 
@@ -635,7 +619,7 @@ Item {
           NText {
             Layout.fillWidth: true
             visible: !(root.editToken && root.editToken.trim().length > 0)
-            text: "Note: token is empty. If your gateway requires auth, requests will fail with 401/403."
+            text: "Note: token is empty. If your gateway requires auth, the connection will fail."
             color: Color.mOnSurfaceVariant
             wrapMode: Text.WordWrap
             pointSize: Style.fontSizeS
@@ -649,15 +633,176 @@ Item {
             wrapMode: Text.WordWrap
             pointSize: Style.fontSizeS
           }
+        }
+      }
 
-          NText {
-            Layout.fillWidth: true
-            visible: (root.lastHttpStatus === 404 || root.lastHttpStatus === 403) && root.openAiEndpointEnabledHint
-            text: "If this is OpenClaw Gateway: enable gateway.http.endpoints.chatCompletions.enabled = true"
-            color: Color.mOnSurfaceVariant
-            wrapMode: Text.WordWrap
-            pointSize: Style.fontSizeS
+      // Channel list view
+      Rectangle {
+        Layout.fillWidth: true
+        Layout.fillHeight: true
+        color: Color.mSurface
+        radius: Style.radiusL
+        border.width: 1
+        border.color: Style.capsuleBorderColor
+        visible: root.viewMode === "channels"
+
+        NScrollView {
+          anchors.fill: parent
+
+          ListView {
+            id: channelList
+            width: parent.width
+            height: parent.height
+            clip: true
+            spacing: 1
+            model: root.channelMeta
+
+            delegate: Rectangle {
+              width: ListView.view.width
+              implicitHeight: channelRow.implicitHeight + Style.marginM * 2
+              color: channelMouseArea.containsMouse
+                ? (Color.mSecondaryContainer !== undefined ? Color.mSecondaryContainer : Color.mSurfaceVariant)
+                : "transparent"
+
+              RowLayout {
+                id: channelRow
+                anchors.fill: parent
+                anchors.margins: Style.marginM
+                spacing: Style.marginM
+
+                NIcon {
+                  icon: modelData.systemImage || "message-circle"
+                  color: Color.mOnSurface
+                }
+
+                ColumnLayout {
+                  Layout.fillWidth: true
+                  spacing: 2
+
+                  NText {
+                    text: modelData.label || modelData.id || "Channel"
+                    color: Color.mOnSurface
+                    font.weight: Font.DemiBold
+                    pointSize: Style.fontSizeM
+                  }
+
+                  NText {
+                    text: modelData.detailLabel || ""
+                    color: Color.mOnSurfaceVariant
+                    pointSize: Style.fontSizeS
+                    visible: !!(modelData.detailLabel)
+                  }
+                }
+
+                NIcon {
+                  icon: "chevron-right"
+                  color: Color.mOnSurfaceVariant
+                }
+              }
+
+              MouseArea {
+                id: channelMouseArea
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: {
+                  if (main && main.selectChannel)
+                    main.selectChannel(modelData.id)
+                }
+              }
+            }
           }
+        }
+
+        // Empty state
+        NText {
+          anchors.centerIn: parent
+          visible: root.channelMeta.length === 0
+          text: root.connectionState === "connected" ? "No channels available" : "Connecting..."
+          color: Color.mOnSurfaceVariant
+          pointSize: Style.fontSizeM
+        }
+      }
+
+      // Session list view
+      Rectangle {
+        Layout.fillWidth: true
+        Layout.fillHeight: true
+        color: Color.mSurface
+        radius: Style.radiusL
+        border.width: 1
+        border.color: Style.capsuleBorderColor
+        visible: root.viewMode === "sessions"
+
+        NScrollView {
+          anchors.fill: parent
+
+          ListView {
+            id: sessionList
+            width: parent.width
+            height: parent.height
+            clip: true
+            spacing: 1
+            model: root.sessionsList
+
+            delegate: Rectangle {
+              width: ListView.view.width
+              implicitHeight: sessionRow.implicitHeight + Style.marginM * 2
+              color: sessionMouseArea.containsMouse
+                ? (Color.mSecondaryContainer !== undefined ? Color.mSecondaryContainer : Color.mSurfaceVariant)
+                : "transparent"
+
+              RowLayout {
+                id: sessionRow
+                anchors.fill: parent
+                anchors.margins: Style.marginM
+                spacing: Style.marginM
+
+                ColumnLayout {
+                  Layout.fillWidth: true
+                  spacing: 2
+
+                  NText {
+                    text: root._sessionDisplayName(modelData.sessionKey || modelData.key || "")
+                    color: Color.mOnSurface
+                    font.weight: Font.DemiBold
+                    pointSize: Style.fontSizeM
+                  }
+
+                  NText {
+                    text: modelData.label || ""
+                    color: Color.mOnSurfaceVariant
+                    pointSize: Style.fontSizeS
+                    visible: !!(modelData.label)
+                  }
+                }
+
+                NIcon {
+                  icon: "chevron-right"
+                  color: Color.mOnSurfaceVariant
+                }
+              }
+
+              MouseArea {
+                id: sessionMouseArea
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: {
+                  var key = modelData.sessionKey || modelData.key || ""
+                  if (main && main.selectSession && key)
+                    main.selectSession(key)
+                }
+              }
+            }
+          }
+        }
+
+        // Empty state
+        NText {
+          anchors.centerIn: parent
+          visible: root.sessionsList.length === 0
+          text: "No sessions"
+          color: Color.mOnSurfaceVariant
+          pointSize: Style.fontSizeM
         }
       }
 
@@ -669,6 +814,7 @@ Item {
         radius: Style.radiusL
         border.width: 1
         border.color: Style.capsuleBorderColor
+        visible: root.viewMode === "chat"
 
         NScrollView {
           anchors.fill: parent
@@ -736,6 +882,7 @@ Item {
       RowLayout {
         Layout.fillWidth: true
         spacing: Style.marginM
+        visible: root.viewMode === "chat"
 
         Item {
           id: composerArea
@@ -745,7 +892,7 @@ Item {
           NTextInput {
             id: composerInput
             anchors.fill: parent
-            placeholderText: "Message OpenClaw..."
+            placeholderText: "Message..."
             enabled: !root.isSending
 
             onTextChanged: rebuildCommandSuggestions(text)
@@ -757,8 +904,6 @@ Item {
             id: commandMenu
             visible: root.commandMenuOpen && commandSuggestionsModel.count > 0
             width: composerArea.width
-            // Cap height; list is scrollable.
-            // Avoid a 0-height deadlock: ListView.contentHeight can stay 0 until the view has a non-zero height.
             height: visible
               ? Math.min(240 * Style.uiScaleRatio, Math.max(48 * Style.uiScaleRatio, commandList.contentHeight + Style.marginS * 2))
               : 0

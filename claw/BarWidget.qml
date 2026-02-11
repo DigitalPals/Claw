@@ -37,8 +37,10 @@ Rectangle {
   readonly property color statusIndicatorColor: {
     if (root.hasUnread)
       return (Color.mPrimary !== undefined) ? Color.mPrimary : "#2196F3"
-    if (root.connectionState === "ok")
+    if (root.connectionState === "connected")
       return "#4CAF50"
+    if (root.connectionState === "connecting")
+      return "#FFA726"
     if (root.connectionState === "error")
       return "#F44336"
     return Color.mOutline

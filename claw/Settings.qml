@@ -13,14 +13,10 @@ ColumnLayout {
   spacing: Style.marginM
 
   // Local editable state.
-  property string editGatewayUrl: "http://127.0.0.1:18789"
+  property string editWsUrl: "ws://127.0.0.1:18789"
   property string editToken: ""
   property string editAgentId: "main"
-  property string editUser: "noctalia:claw"
-  property string editSessionKey: ""
-  property bool editStream: true
-  property bool editHint: true
-  property int editTimeoutMs: 60000
+  property bool editAutoReconnect: true
   property bool editNotifyOnResponse: true
   property bool editNotifyOnlyWhenAppInactive: true
 
@@ -35,14 +31,10 @@ ColumnLayout {
   }
 
   function reloadFromSettings() {
-    root.editGatewayUrl = pickSetting("gatewayUrl", "http://127.0.0.1:18789")
+    root.editWsUrl = pickSetting("wsUrl", "ws://127.0.0.1:18789")
     root.editToken = pickSetting("token", "")
     root.editAgentId = pickSetting("agentId", "main")
-    root.editUser = pickSetting("user", "noctalia:claw")
-    root.editSessionKey = pickSetting("sessionKey", "")
-    root.editStream = !!pickSetting("stream", true)
-    root.editHint = !!pickSetting("openAiEndpointEnabledHint", true)
-    root.editTimeoutMs = pickSetting("requestTimeoutMs", 60000)
+    root.editAutoReconnect = !!pickSetting("autoReconnect", true)
     root.editNotifyOnResponse = !!pickSetting("notifyOnResponse", true)
     root.editNotifyOnlyWhenAppInactive = !!pickSetting("notifyOnlyWhenAppInactive", true)
   }
@@ -55,14 +47,10 @@ ColumnLayout {
     if (!pluginApi)
       return
 
-    pluginApi.pluginSettings.gatewayUrl = root.editGatewayUrl
+    pluginApi.pluginSettings.wsUrl = root.editWsUrl
     pluginApi.pluginSettings.token = root.editToken
     pluginApi.pluginSettings.agentId = root.editAgentId
-    pluginApi.pluginSettings.user = root.editUser
-    pluginApi.pluginSettings.sessionKey = root.editSessionKey
-    pluginApi.pluginSettings.stream = root.editStream
-    pluginApi.pluginSettings.openAiEndpointEnabledHint = root.editHint
-    pluginApi.pluginSettings.requestTimeoutMs = root.editTimeoutMs
+    pluginApi.pluginSettings.autoReconnect = root.editAutoReconnect
     pluginApi.pluginSettings.notifyOnResponse = root.editNotifyOnResponse
     pluginApi.pluginSettings.notifyOnlyWhenAppInactive = root.editNotifyOnlyWhenAppInactive
 
@@ -79,23 +67,23 @@ ColumnLayout {
 
   NText {
     Layout.fillWidth: true
-    text: "Chat panel for OpenClaw Gateway via the OpenAI-compatible /v1/chat/completions endpoint."
+    text: "Unified inbox for OpenClaw Gateway channels via WebSocket."
     color: Color.mOnSurfaceVariant
     wrapMode: Text.WordWrap
   }
 
   NTextInput {
     Layout.fillWidth: true
-    label: "Gateway URL"
-    description: "Base URL. Default: http://127.0.0.1:18789"
-    text: root.editGatewayUrl
-    onTextChanged: root.editGatewayUrl = text
+    label: "WebSocket URL"
+    description: "Gateway WebSocket endpoint. Default: ws://127.0.0.1:18789"
+    text: root.editWsUrl
+    onTextChanged: root.editWsUrl = text
   }
 
   NLabel {
     Layout.fillWidth: true
     label: "Token"
-    description: "Authorization: Bearer <token|password>. Avoid exposing the gateway without auth."
+    description: "Sent during WebSocket handshake. Avoid exposing the gateway without auth."
   }
 
   TextField {
@@ -109,33 +97,17 @@ ColumnLayout {
   NTextInput {
     Layout.fillWidth: true
     label: "Agent ID"
-    description: "Sent as x-openclaw-agent-id (also used as model openclaw:<agentId>)"
+    description: "Agent used for routing chat messages."
     text: root.editAgentId
     onTextChanged: root.editAgentId = text
   }
 
-  NTextInput {
-    Layout.fillWidth: true
-    label: "User"
-    description: "OpenAI 'user' field for stable sessions. Default: noctalia:claw"
-    text: root.editUser
-    onTextChanged: root.editUser = text
-  }
-
-  NTextInput {
-    Layout.fillWidth: true
-    label: "Session Key (optional)"
-    description: "If set, sent as x-openclaw-session-key"
-    text: root.editSessionKey
-    onTextChanged: root.editSessionKey = text
-  }
-
   NToggle {
     Layout.fillWidth: true
-    label: "Stream responses (SSE)"
-    description: "Attempt server-sent events streaming; the panel will fall back to non-streaming if needed."
-    checked: root.editStream
-    onCheckedChanged: root.editStream = checked
+    label: "Auto-reconnect"
+    description: "Automatically reconnect with exponential backoff on disconnect."
+    checked: root.editAutoReconnect
+    onCheckedChanged: root.editAutoReconnect = checked
   }
 
   NToggle {
@@ -153,26 +125,5 @@ ColumnLayout {
     checked: root.editNotifyOnlyWhenAppInactive
     enabled: root.editNotifyOnResponse
     onCheckedChanged: root.editNotifyOnlyWhenAppInactive = checked
-  }
-
-  NToggle {
-    Layout.fillWidth: true
-    label: "Show endpoint-disabled hint"
-    description: "Show help text when the gateway returns 404/403 for chat completions."
-    checked: root.editHint
-    onCheckedChanged: root.editHint = checked
-  }
-
-  NTextInput {
-    Layout.fillWidth: true
-    label: "Request timeout (ms)"
-    description: "Abort and show an error after this duration."
-    placeholderText: "60000"
-    text: String(root.editTimeoutMs)
-    onTextChanged: {
-      var n = parseInt(text, 10)
-      if (!isNaN(n))
-        root.editTimeoutMs = n
-    }
   }
 }

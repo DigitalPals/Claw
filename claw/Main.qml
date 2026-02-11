@@ -1,4 +1,5 @@
 import QtQuick
+import QtWebSockets
 import Quickshell
 import Quickshell.Io
 import qs.Commons
@@ -10,42 +11,45 @@ Item {
   // Injected by PluginService
   property var pluginApi: null
 
-  // idle | ok | error
+  // idle | connecting | connected | error
   property string connectionState: "idle"
   property string lastErrorText: ""
 
   // Request/UX state (owned by main so it survives panel close).
   property bool isSending: false
-  property int lastRequestHttpStatus: 0
-  property string lastRequestErrorText: ""
   property bool panelActive: false
   property bool panelAtBottom: false
   property bool hasUnread: false
 
-  // Used to avoid heartbeat overwriting status while a request is in-flight.
-  property int activeRequests: 0
-
-  // Heartbeat config (kept simple; can be promoted to settings later).
-  property int heartbeatIntervalMs: 5000
-  property int heartbeatTimeoutMs: 1500
-  property bool heartbeatInFlight: false
-  property var heartbeatXhr: null
-
   // Keep chat in memory across panel open/close.
-  // The panel uses this model directly, so messages persist as long as the plugin main instance lives.
   property alias messagesModel: messagesModel
+
+  // Channel/session navigation state
+  property var channelMeta: []          // from channels.status
+  property var channelOrder: []
+  property var channelAccounts: ({})
+  property var sessionsList: []          // from sessions.list
+  property string viewMode: "channels"   // "channels" | "sessions" | "chat"
+  property string selectedChannelId: ""
+  property string activeSessionKey: ""
+
+  // Streaming state
+  property int _activeAssistantIndex: -1
+  property string _activeAssistantText: ""
+
+  // Protocol request tracking
+  property int _nextReqId: 1
+  property var _pendingRequests: ({})    // id -> { callback, timer }
+
+  // Reconnection state
+  property int _reconnectAttempts: 0
+
+  // Tick keepalive interval from server (default 15s)
+  property int _tickIntervalMs: 15000
 
   function setStatus(state, errorText) {
     root.connectionState = state || "idle"
     root.lastErrorText = errorText || ""
-  }
-
-  function beginRequest() {
-    root.activeRequests = (root.activeRequests || 0) + 1
-  }
-
-  function endRequest() {
-    root.activeRequests = Math.max(0, (root.activeRequests || 0) - 1)
   }
 
   function setPanelActive(active) {
@@ -62,10 +66,9 @@ Item {
 
   function clearChat() {
     clearMessages()
-    root.lastRequestHttpStatus = 0
-    root.lastRequestErrorText = ""
     root.hasUnread = false
-    // Don't touch connectionState; it's a separate concern.
+    root._activeAssistantIndex = -1
+    root._activeAssistantText = ""
   }
 
   function appendMessage(role, content) {
@@ -99,13 +102,6 @@ Item {
     return fallback
   }
 
-  function _trimTrailingSlashes(s) {
-    var out = (s || "").trim()
-    while (out.length > 1 && out[out.length - 1] === "/")
-      out = out.substring(0, out.length - 1)
-    return out
-  }
-
   function _truncateForToast(s, maxLen) {
     var t = (s === null || s === undefined) ? "" : String(s)
     t = t.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
@@ -119,12 +115,11 @@ Item {
       }
     }
     if (t.length > maxLen)
-      t = t.substring(0, maxLen - 1) + "…"
+      t = t.substring(0, maxLen - 1) + "\u2026"
     return t
   }
 
   function _maybeNotifyResponse(text, isError, opts) {
-    // Notify only when Noctalia isn't focused; otherwise rely on unread badge.
     var notifyOn = opts && opts.notifyOnResponse !== undefined
       ? !!opts.notifyOnResponse
       : !!_pickSetting("notifyOnResponse", true)
@@ -150,430 +145,518 @@ Item {
       ToastService.showNotice(title, body, isError ? "alert-triangle" : "message")
   }
 
-  function _buildOutgoingMessages(newUserText) {
-    var arr = []
-    for (var i = 0; i < messagesModel.count; i++) {
-      var m = messagesModel.get(i)
-      if (m.role === "system" || m.role === "user" || m.role === "assistant")
-        arr.push({ role: m.role, content: m.content })
+  // ──────────────────────────────────────────────
+  // WebSocket
+  // ──────────────────────────────────────────────
+
+  WebSocket {
+    id: ws
+    url: root._pickSetting("wsUrl", "ws://127.0.0.1:18789")
+    active: false
+
+    onStatusChanged: {
+      console.log("[Claw] WS status changed:", ws.status,
+                  "(0=Connecting, 1=Open, 2=Closing, 3=Closed, 4=Error)",
+                  "url:", ws.url, "errorString:", ws.errorString)
+      if (ws.status === WebSocket.Open) {
+        console.log("[Claw] WS open, starting handshake")
+        root.setStatus("connecting", "")
+        root._reconnectAttempts = 0
+        // Start fallback timer in case server doesn't send connect.challenge
+        connectFallbackTimer.start()
+      } else if (ws.status === WebSocket.Closed) {
+        console.log("[Claw] WS closed")
+        root._handleDisconnect("WebSocket closed")
+      } else if (ws.status === WebSocket.Error) {
+        console.log("[Claw] WS error:", ws.errorString)
+        root._handleDisconnect(ws.errorString || "WebSocket error")
+      }
     }
-    arr.push({ role: "user", content: newUserText })
-    return arr
+
+    onTextMessageReceived: function(message) {
+      console.log("[Claw] WS recv:", message.substring(0, 200))
+      root._dispatchFrame(message)
+    }
   }
 
-  function sendUserText(text, opts) {
+  // Fallback timer: if no connect.challenge arrives within 500ms, send connect anyway
+  Timer {
+    id: connectFallbackTimer
+    interval: 500
+    repeat: false
+    onTriggered: {
+      if (root.connectionState === "connecting")
+        root._sendConnect("", 0)
+    }
+  }
+
+  // Reconnection timer with exponential backoff
+  Timer {
+    id: reconnectTimer
+    repeat: false
+    onTriggered: {
+      if (!ws.active) {
+        ws.url = root._pickSetting("wsUrl", "ws://127.0.0.1:18789")
+        ws.active = true
+      }
+    }
+  }
+
+  // Tick keepalive timer
+  Timer {
+    id: tickTimer
+    interval: root._tickIntervalMs
+    repeat: true
+    running: false
+    onTriggered: {
+      if (root.connectionState === "connected")
+        root.fetchChannels()
+    }
+  }
+
+  // ──────────────────────────────────────────────
+  // Frame Dispatcher
+  // ──────────────────────────────────────────────
+
+  function _dispatchFrame(raw) {
+    var frame
+    try {
+      frame = JSON.parse(raw)
+    } catch (e) {
+      return
+    }
+
+    if (frame.type === "res")
+      _handleResponse(frame)
+    else if (frame.type === "event")
+      _handleEvent(frame)
+  }
+
+  // ──────────────────────────────────────────────
+  // Request / Response
+  // ──────────────────────────────────────────────
+
+  function _sendRequest(method, params, callback, timeoutMs) {
+    var id = String(root._nextReqId++)
+    var frame = {
+      type: "req",
+      id: id,
+      method: method,
+      params: params || {}
+    }
+
+    var timer = null
+    if (timeoutMs && timeoutMs > 0) {
+      timer = Qt.createQmlObject(
+        'import QtQuick; Timer { repeat: false }',
+        root,
+        "clawReqTimeout_" + id
+      )
+      timer.interval = timeoutMs
+      timer.triggered.connect(function() {
+        var entry = root._pendingRequests[id]
+        if (entry) {
+          delete root._pendingRequests[id]
+          if (entry.timer)
+            entry.timer.destroy()
+          if (entry.callback)
+            entry.callback({ ok: false, error: { message: "Request timed out" } })
+        }
+      })
+      timer.start()
+    }
+
+    var pending = root._pendingRequests
+    pending[id] = { callback: callback || null, timer: timer }
+    root._pendingRequests = pending
+
+    var json = JSON.stringify(frame)
+    console.log("[Claw] WS send:", json.substring(0, 200))
+    ws.sendTextMessage(json)
+    return id
+  }
+
+  function _handleResponse(frame) {
+    var id = frame.id
+    var pending = root._pendingRequests
+    var entry = pending[id]
+    if (!entry)
+      return
+
+    delete pending[id]
+    root._pendingRequests = pending
+
+    if (entry.timer) {
+      entry.timer.stop()
+      entry.timer.destroy()
+    }
+
+    if (entry.callback)
+      entry.callback(frame)
+  }
+
+  function _cancelAllPending() {
+    var pending = root._pendingRequests
+    for (var id in pending) {
+      var entry = pending[id]
+      if (entry.timer) {
+        entry.timer.stop()
+        entry.timer.destroy()
+      }
+    }
+    root._pendingRequests = ({})
+  }
+
+  // ──────────────────────────────────────────────
+  // Event Handling
+  // ──────────────────────────────────────────────
+
+  function _handleEvent(frame) {
+    var event = frame.event || ""
+    if (event === "connect.challenge") {
+      connectFallbackTimer.stop()
+      var p = frame.payload || {}
+      root._sendConnect(p.nonce || "", p.ts || 0)
+    } else if (event === "chat") {
+      root._handleChatEvent(frame.payload || {})
+    }
+  }
+
+  // ──────────────────────────────────────────────
+  // Connect Handshake
+  // ──────────────────────────────────────────────
+
+  // Unique instance ID for this client session
+  property string _instanceId: ""
+
+  function _ensureInstanceId() {
+    if (!root._instanceId) {
+      // Generate a simple UUID-like string
+      var s = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx"
+      root._instanceId = s.replace(/[xy]/g, function(c) {
+        var r = Math.random() * 16 | 0
+        return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16)
+      })
+    }
+    return root._instanceId
+  }
+
+  function _sendConnect(nonce, ts) {
+    var token = String(_pickSetting("token", "") || "").trim()
+    var params = {
+      minProtocol: 3,
+      maxProtocol: 3,
+      client: {
+        id: "gateway-client",
+        version: "0.2.0",
+        platform: "linux",
+        mode: "backend",
+        instanceId: _ensureInstanceId()
+      },
+      role: "operator",
+      scopes: [],
+      caps: [],
+      auth: { token: token }
+    }
+
+    console.log("[Claw] _sendConnect nonce:", nonce, "ts:", ts)
+    _sendRequest("connect", params, function(res) {
+      console.log("[Claw] connect response:", JSON.stringify(res).substring(0, 300))
+      if (res.ok) {
+        var payload = res.payload || {}
+        // Extract tick interval from policy
+        if (payload.policy && payload.policy.tickIntervalMs)
+          root._tickIntervalMs = payload.policy.tickIntervalMs
+
+        root.setStatus("connected", "")
+        tickTimer.start()
+        root.fetchChannels()
+      } else {
+        var errMsg = (res.error && res.error.message) ? res.error.message : "Connect handshake failed"
+        console.log("[Claw] connect failed:", errMsg)
+        root.setStatus("error", errMsg)
+      }
+    }, 10000)
+  }
+
+  // ──────────────────────────────────────────────
+  // Disconnect / Reconnect
+  // ──────────────────────────────────────────────
+
+  function _handleDisconnect(reason) {
+    console.log("[Claw] _handleDisconnect:", reason, "state:", root.connectionState, "ws.active:", ws.active)
+    connectFallbackTimer.stop()
+    tickTimer.stop()
+    _cancelAllPending()
+
+    // Don't overwrite a manual "idle" state
+    if (root.connectionState !== "idle")
+      root.setStatus("error", reason || "Disconnected")
+
+    root.isSending = false
+    root._activeAssistantIndex = -1
+    root._activeAssistantText = ""
+
+    var autoReconnect = !!_pickSetting("autoReconnect", true)
+    if (autoReconnect && ws.active) {
+      ws.active = false
+      root._reconnectAttempts++
+      var maxDelay = _pickSetting("reconnectMaxDelayMs", 30000)
+      var delay = Math.min(1000 * Math.pow(2, root._reconnectAttempts - 1), maxDelay)
+      root.setStatus("connecting", "Reconnecting in " + Math.round(delay / 1000) + "s...")
+      reconnectTimer.interval = delay
+      reconnectTimer.start()
+    }
+  }
+
+  function disconnect() {
+    reconnectTimer.stop()
+    connectFallbackTimer.stop()
+    tickTimer.stop()
+    _cancelAllPending()
+    ws.active = false
+    root.setStatus("idle", "")
+  }
+
+  function reconnect() {
+    disconnect()
+    root._reconnectAttempts = 0
+    root.setStatus("connecting", "")
+    var wsUrl = root._pickSetting("wsUrl", "ws://127.0.0.1:18789")
+    console.log("[Claw] reconnect() → url:", wsUrl, "pluginApi:", !!root.pluginApi)
+    ws.url = wsUrl
+    ws.active = true
+  }
+
+  // ──────────────────────────────────────────────
+  // Channel / Session API
+  // ──────────────────────────────────────────────
+
+  function fetchChannels() {
+    _sendRequest("channels.status", {}, function(res) {
+      if (!res.ok)
+        return
+
+      var payload = res.payload || {}
+      root.channelMeta = payload.channelMeta || []
+      root.channelOrder = payload.channelOrder || []
+      root.channelAccounts = payload.channelAccounts || {}
+    }, 10000)
+  }
+
+  function fetchSessions(channelId) {
+    var params = {}
+    if (channelId)
+      params.channelId = channelId
+
+    _sendRequest("sessions.list", params, function(res) {
+      if (!res.ok)
+        return
+      var payload = res.payload || {}
+      root.sessionsList = payload.sessions || []
+    }, 10000)
+  }
+
+  function fetchHistory(sessionKey, callback) {
+    _sendRequest("chat.history", { sessionKey: sessionKey }, function(res) {
+      if (!res.ok) {
+        if (callback)
+          callback([])
+        return
+      }
+      var payload = res.payload || {}
+      var rawMessages = payload.messages || []
+      // Filter to displayable roles only
+      var messages = []
+      for (var i = 0; i < rawMessages.length; i++) {
+        var m = rawMessages[i]
+        var role = m.role || ""
+        if (role === "user" || role === "assistant") {
+          // Content may be a string or an array of content blocks
+          var content = ""
+          if (typeof m.content === "string") {
+            content = m.content
+          } else if (Array.isArray(m.content)) {
+            var parts = []
+            for (var j = 0; j < m.content.length; j++) {
+              var block = m.content[j]
+              if (block && block.type === "text" && block.text)
+                parts.push(block.text)
+            }
+            content = parts.join("\n")
+          }
+          if (content)
+            messages.push({ role: role, content: content })
+        }
+      }
+      if (callback)
+        callback(messages)
+    }, 15000)
+  }
+
+  function sendChat(sessionKey, messageText) {
     if (root.isSending)
       return
 
-    var t = (text || "").trim()
+    var t = (messageText || "").trim()
     if (!t)
       return
 
-    var outgoing = _buildOutgoingMessages(t)
-
     appendMessage("user", t)
     appendMessage("assistant", "...")
-    var assistantIndex = messagesModel.count - 1
-
-    root.lastRequestErrorText = ""
-    root.lastRequestHttpStatus = 0
+    root._activeAssistantIndex = messagesModel.count - 1
+    root._activeAssistantText = ""
     root.isSending = true
-    beginRequest()
 
-    var stream = opts && opts.stream !== undefined
-      ? !!opts.stream
-      : !!_pickSetting("stream", true)
+    var idempotencyKey = "claw-" + Date.now() + "-" + Math.random().toString(36).substring(2, 10)
+    var agentId = String(_pickSetting("agentId", "main") || "").trim()
 
-    _requestChatCompletions(outgoing, assistantIndex, stream, true, opts || {})
+    _sendRequest("chat.send", {
+      sessionKey: sessionKey,
+      message: t,
+      agentId: agentId,
+      idempotencyKey: idempotencyKey
+    }, function(res) {
+      if (!res.ok) {
+        var errMsg = (res.error && res.error.message) ? res.error.message : "Send failed"
+        setMessageContent(root._activeAssistantIndex, "Error: " + errMsg)
+        root.isSending = false
+        root._activeAssistantIndex = -1
+        root._activeAssistantText = ""
+        _maybeNotifyResponse(errMsg, true)
+      }
+      // On success, streaming events will arrive via chat events
+    }, 30000)
   }
 
-  function _requestChatCompletions(outgoingMessages, assistantIndex, stream, allowFallback, opts) {
-    var base = _trimTrailingSlashes((opts && opts.gatewayUrl !== undefined)
-      ? opts.gatewayUrl
-      : _pickSetting("gatewayUrl", "http://127.0.0.1:18789"))
-    var url = base + "/v1/chat/completions"
+  function abortChat(sessionKey) {
+    _sendRequest("chat.abort", { sessionKey: sessionKey }, function(res) {
+      // Best-effort; streaming handler will deal with the aborted state
+    }, 5000)
+  }
 
-    var xhr = new XMLHttpRequest()
+  // ──────────────────────────────────────────────
+  // Chat Event Handling (streaming)
+  // ──────────────────────────────────────────────
 
-    var timeoutTimer = Qt.createQmlObject(
-      'import QtQuick 2.0; Timer { repeat: false }',
-      root,
-      "clawMainTimeoutTimer"
-    )
+  function _extractTextFromContent(content) {
+    if (typeof content === "string")
+      return content
+    if (Array.isArray(content)) {
+      var parts = []
+      for (var i = 0; i < content.length; i++) {
+        var block = content[i]
+        if (block && block.type === "text" && block.text)
+          parts.push(block.text)
+      }
+      return parts.join("\n")
+    }
+    return ""
+  }
 
-    var processedLen = 0
-    var sseBuffer = ""
-    var assistantText = ""
-    var sawAnyDelta = false
+  function _handleChatEvent(payload) {
+    var sessionKey = payload.sessionKey || ""
+    // Only handle events for the active session
+    if (sessionKey !== root.activeSessionKey)
+      return
 
-    function finishSending() {
+    var state = payload.state || ""
+    var message = payload.message || {}
+    var text = _extractTextFromContent(message.content)
+
+    if (state === "delta") {
+      // Delta events carry accumulated full text in message.content
+      if (root._activeAssistantIndex >= 0) {
+        root._activeAssistantText = text
+        setMessageContent(root._activeAssistantIndex, text || "...")
+      }
+    } else if (state === "final") {
+      var finalText = text || root._activeAssistantText
+      if (root._activeAssistantIndex >= 0)
+        setMessageContent(root._activeAssistantIndex, finalText || "(empty response)")
+      _maybeNotifyResponse(finalText, false)
       root.isSending = false
-      endRequest()
-    }
-
-    function markUnreadIfNeeded() {
-      if (!root.panelActive || !root.panelAtBottom)
-        root.hasUnread = true
-    }
-
-    function fail(msg, status) {
-      root.lastRequestHttpStatus = status || 0
-      root.lastRequestErrorText = msg || "Request failed"
-      setStatus("error", root.lastRequestErrorText)
-      setMessageContent(assistantIndex, "Error: " + root.lastRequestErrorText)
-      markUnreadIfNeeded()
-      _maybeNotifyResponse(root.lastRequestErrorText, true, opts)
-      finishSending()
-    }
-
-    function finishOk() {
-      root.lastRequestHttpStatus = xhr.status || 0
-      root.lastRequestErrorText = ""
-      setStatus("ok", "")
-
-      if (!assistantText)
-        setMessageContent(assistantIndex, "(empty response)")
-
-      markUnreadIfNeeded()
-      _maybeNotifyResponse(assistantText, false, opts)
-      finishSending()
-    }
-
-    function drainSse() {
-      var text = xhr.responseText || ""
-      if (text.length <= processedLen)
-        return
-
-      var chunk = text.substring(processedLen)
-      processedLen = text.length
-
-      // Normalize CRLF/CR for simpler parsing.
-      sseBuffer += chunk
-      sseBuffer = sseBuffer.replace(/\r/g, "")
-
-      // SSE events separated by blank line.
-      while (true) {
-        var sep = sseBuffer.indexOf("\n\n")
-        if (sep === -1)
-          break
-
-        var evt = sseBuffer.substring(0, sep)
-        sseBuffer = sseBuffer.substring(sep + 2)
-
-        var lines = evt.split("\n")
-        for (var i = 0; i < lines.length; i++) {
-          var line = lines[i]
-          if (line.indexOf("data:") !== 0)
-            continue
-
-          var data = line.substring(5).trim()
-          if (data === "[DONE]")
-            return
-
-          try {
-            var obj = JSON.parse(data)
-            var choice0 = (obj.choices && obj.choices.length) ? obj.choices[0] : null
-            var delta = choice0 && choice0.delta ? choice0.delta : null
-            var dtext = (delta && delta.content) ? delta.content : ""
-
-            if (dtext) {
-              sawAnyDelta = true
-              assistantText += dtext
-              setMessageContent(assistantIndex, assistantText)
-            }
-          } catch (e) {
-            // Ignore parse errors for partial frames; final-state handles fallback.
-          }
-        }
+      root._activeAssistantIndex = -1
+      root._activeAssistantText = ""
+    } else if (state === "aborted") {
+      if (root._activeAssistantIndex >= 0) {
+        var abortedText = root._activeAssistantText || ""
+        if (abortedText)
+          setMessageContent(root._activeAssistantIndex, abortedText + "\n\n(aborted)")
+        else
+          setMessageContent(root._activeAssistantIndex, "(aborted)")
       }
+      root.isSending = false
+      root._activeAssistantIndex = -1
+      root._activeAssistantText = ""
+    } else if (state === "error") {
+      var errMsg = (payload.error && typeof payload.error === "string") ? payload.error
+        : (payload.error && payload.error.message) ? payload.error.message
+        : "Unknown error"
+      if (root._activeAssistantIndex >= 0)
+        setMessageContent(root._activeAssistantIndex, "Error: " + errMsg)
+      _maybeNotifyResponse(errMsg, true)
+      root.isSending = false
+      root._activeAssistantIndex = -1
+      root._activeAssistantText = ""
     }
+  }
 
-    xhr.onprogress = function() {
-      if (stream)
-        drainSse()
-    }
+  // ──────────────────────────────────────────────
+  // Navigation
+  // ──────────────────────────────────────────────
 
-    xhr.onerror = function() {
-      timeoutTimer.stop()
+  function selectChannel(channelId) {
+    root.selectedChannelId = channelId
+    root.viewMode = "sessions"
+    root.sessionsList = []
+    fetchSessions(channelId)
+  }
 
-      if (stream && allowFallback) {
-        setMessageContent(assistantIndex, "...")
-        _requestChatCompletions(outgoingMessages, assistantIndex, false, false, opts)
-        return
+  function selectSession(sessionKey) {
+    root.activeSessionKey = sessionKey
+    root.viewMode = "chat"
+    clearMessages()
+    root.hasUnread = false
+    root._activeAssistantIndex = -1
+    root._activeAssistantText = ""
+
+    fetchHistory(sessionKey, function(messages) {
+      for (var i = 0; i < messages.length; i++) {
+        var m = messages[i]
+        appendMessage(m.role || "assistant", m.content || "")
       }
-
-      fail("Network error (request failed).", 0)
-    }
-
-    xhr.onreadystatechange = function() {
-      if (xhr.readyState !== XMLHttpRequest.DONE)
-        return
-
-      timeoutTimer.stop()
-
-      if (stream)
-        drainSse()
-
-      if (xhr.status >= 200 && xhr.status < 300) {
-        var contentType = xhr.getResponseHeader("Content-Type") || ""
-        if (contentType.indexOf("text/html") !== -1) {
-          fail("Received HTML from server. This usually means the Gateway URL points at the OpenClaw Control UI or a proxy that is not forwarding API requests.", xhr.status)
-          return
-        }
-
-        if (!stream) {
-          try {
-            var obj = JSON.parse(xhr.responseText || "")
-            var c0 = (obj.choices && obj.choices.length) ? obj.choices[0] : null
-            var msg = c0 && c0.message ? c0.message : null
-            assistantText = (msg && msg.content) ? msg.content : ""
-            setMessageContent(assistantIndex, assistantText || "(empty response)")
-            finishOk()
-            return
-          } catch (e0) {
-            fail("Response parse error.", xhr.status)
-            return
-          }
-        }
-
-        // stream=true success path
-        if (!sawAnyDelta) {
-          // Some environments buffer the whole response; try a JSON parse fallback.
-          try {
-            var obj2 = JSON.parse(xhr.responseText || "")
-            var c02 = (obj2.choices && obj2.choices.length) ? obj2.choices[0] : null
-            var msg2 = c02 && c02.message ? c02.message : null
-            assistantText = (msg2 && msg2.content) ? msg2.content : ""
-            setMessageContent(assistantIndex, assistantText || "(empty response)")
-          } catch (e2) {
-            // If parsing failed, but HTTP succeeded, keep whatever we accumulated.
-          }
-        }
-
-        finishOk()
-        return
-      }
-
-      // Non-2xx handling
-      var status = xhr.status || 0
-      var msgText = "HTTP " + status
-
-      var hintEnabled = opts && opts.openAiEndpointEnabledHint !== undefined
-        ? !!opts.openAiEndpointEnabledHint
-        : !!_pickSetting("openAiEndpointEnabledHint", true)
-
-      if (status === 401 || status === 403) {
-        msgText = "Authentication/authorization failed (HTTP " + status + "). Check token and gateway config."
-      } else if (status === 405) {
-        msgText = "Method Not Allowed (HTTP 405). This server is refusing POST/OPTIONS, which usually means you're hitting the OpenClaw Control UI or a reverse proxy that only allows GET. Point Claw at the OpenClaw Gateway API base URL and ensure /v1/chat/completions is enabled."
-      } else if (status === 404 && hintEnabled) {
-        msgText = "Endpoint not found (HTTP 404). The gateway chat-completions endpoint may be disabled. Enable: gateway.http.endpoints.chatCompletions.enabled = true"
-      } else {
-        // Best-effort parse of error message.
-        try {
-          var errObj = JSON.parse(xhr.responseText || "")
-          if (errObj && errObj.error && errObj.error.message)
-            msgText = errObj.error.message
-        } catch (e3) {}
-      }
-
-      if (stream && allowFallback) {
-        setMessageContent(assistantIndex, "...")
-        _requestChatCompletions(outgoingMessages, assistantIndex, false, false, opts)
-        return
-      }
-
-      fail(msgText, status)
-    }
-
-    var timeoutMs = (opts && opts.requestTimeoutMs !== undefined)
-      ? opts.requestTimeoutMs
-      : _pickSetting("requestTimeoutMs", 60000)
-
-    timeoutTimer.interval = timeoutMs
-    timeoutTimer.triggered.connect(function() {
-      try { xhr.abort() } catch (e) {}
-
-      if (stream && allowFallback) {
-        setMessageContent(assistantIndex, "...")
-        _requestChatCompletions(outgoingMessages, assistantIndex, false, false, opts)
-        return
-      }
-
-      fail("Request timed out after " + timeoutMs + "ms.", 0)
     })
-
-    // Prefer both: header selection + model hint for gateways that route by model.
-    var agentId = (opts && opts.agentId !== undefined)
-      ? (opts.agentId || "")
-      : (_pickSetting("agentId", "main") || "")
-    agentId = String(agentId).trim()
-
-    var modelName = "openclaw"
-    if (agentId.length > 0)
-      modelName = "openclaw:" + agentId
-
-    var payload = {
-      model: modelName,
-      messages: outgoingMessages,
-      stream: !!stream,
-      user: (opts && opts.user !== undefined) ? opts.user : _pickSetting("user", "noctalia:claw")
-    }
-
-    xhr.open("POST", url)
-    xhr.setRequestHeader("Content-Type", "application/json")
-
-    var token = (opts && opts.token !== undefined) ? opts.token : _pickSetting("token", "")
-    token = String(token || "").trim()
-    if (token.length > 0)
-      xhr.setRequestHeader("Authorization", "Bearer " + token)
-
-    if (agentId.length > 0)
-      xhr.setRequestHeader("x-openclaw-agent-id", agentId)
-
-    var sessionKey = (opts && opts.sessionKey !== undefined) ? opts.sessionKey : _pickSetting("sessionKey", "")
-    sessionKey = String(sessionKey || "").trim()
-    if (sessionKey.length > 0)
-      xhr.setRequestHeader("x-openclaw-session-key", sessionKey)
-
-    timeoutTimer.start()
-    xhr.send(JSON.stringify(payload))
   }
 
-  function heartbeatOnce() {
-    // Don't fight with user-initiated requests (the panel updates status itself).
-    if ((root.activeRequests || 0) > 0)
-      return
-    if (root.heartbeatInFlight)
-      return
-
-    var base = _trimTrailingSlashes(_pickSetting("gatewayUrl", "http://127.0.0.1:18789"))
-    if (!base) {
-      root.setStatus("idle", "")
-      return
-    }
-
-    var url = base + "/v1/chat/completions"
-    var xhr = new XMLHttpRequest()
-    root.heartbeatInFlight = true
-    root.heartbeatXhr = xhr
-
-    function finish(state, msg) {
-      heartbeatTimeoutTimer.stop()
-      root.heartbeatInFlight = false
-      root.heartbeatXhr = null
-      // Status might have changed while we were waiting.
-      if ((root.activeRequests || 0) > 0)
-        return
-      root.setStatus(state, msg || "")
-    }
-
-    xhr.onerror = function() {
-      if (root.heartbeatXhr !== xhr)
-        return
-      finish("error", "Gateway unreachable (network error).")
-    }
-
-    xhr.onreadystatechange = function() {
-      if (xhr.readyState !== XMLHttpRequest.DONE)
-        return
-
-      if (root.heartbeatXhr !== xhr)
-        return
-
-      heartbeatTimeoutTimer.stop()
-
-      var status = xhr.status || 0
-      var contentType = xhr.getResponseHeader("Content-Type") || ""
-
-      // Some servers (e.g. the Control UI) will happily answer with HTML.
-      if (status >= 200 && status < 300 && contentType.indexOf("text/html") !== -1) {
-        finish("error", "Gateway URL points at an HTML UI, not the API.")
-        return
-      }
-
-      if (status >= 200 && status < 300) {
-        finish("ok", "")
-        return
-      }
-
-      if (status === 401 || status === 403) {
-        finish("error", "Authentication/authorization failed (HTTP " + status + ").")
-        return
-      }
-
-      if (status === 404) {
-        finish("error", "Endpoint not found (HTTP 404).")
-        return
-      }
-
-      // Many servers return 405 for OPTIONS even though the route exists; treat it as "reachable".
-      if (status === 405) {
-        finish("ok", "")
-        return
-      }
-
-      if (status === 0) {
-        finish("error", "Gateway unreachable (no HTTP response).")
-        return
-      }
-
-      finish("error", "HTTP " + status)
-    }
-
-    try {
-      xhr.open("OPTIONS", url)
-
-      var token = (_pickSetting("token", "") || "").trim()
-      if (token.length > 0)
-        xhr.setRequestHeader("Authorization", "Bearer " + token)
-
-      heartbeatTimeoutTimer.stop()
-      heartbeatTimeoutTimer.start()
-      xhr.send()
-    } catch (e2) {
-      finish("error", "Heartbeat failed to start.")
+  function navigateBack() {
+    if (root.viewMode === "chat") {
+      root.viewMode = "sessions"
+      root.activeSessionKey = ""
+      clearMessages()
+    } else if (root.viewMode === "sessions") {
+      root.viewMode = "channels"
+      root.selectedChannelId = ""
+      root.sessionsList = []
     }
   }
 
-  Timer {
-    id: heartbeatTimeoutTimer
-    interval: root.heartbeatTimeoutMs
-    repeat: false
-    onTriggered: {
-      var xhr = root.heartbeatXhr
-      root.heartbeatInFlight = false
-      root.heartbeatXhr = null
-      try { xhr.abort() } catch (e) {}
-      // Avoid overwriting an active request state.
-      if ((root.activeRequests || 0) === 0)
-        root.setStatus("error", "Gateway heartbeat timed out after " + root.heartbeatTimeoutMs + "ms.")
-    }
-  }
-
-  Timer {
-    id: heartbeatTimer
-    interval: root.heartbeatIntervalMs
-    repeat: true
-    running: false
-    onTriggered: root.heartbeatOnce()
-  }
+  // ──────────────────────────────────────────────
+  // Lifecycle
+  // ──────────────────────────────────────────────
 
   Component.onCompleted: {
-    root.heartbeatOnce()
-    heartbeatTimer.start()
+    // Don't connect here; wait for pluginApi to be injected so settings are available.
   }
 
   onPluginApiChanged: {
-    root.heartbeatOnce()
     if (pluginApi)
-      heartbeatTimer.start()
+      reconnect()
     else
-      heartbeatTimer.stop()
+      disconnect()
   }
 
-  // Optional IPC hook (best-effort). Without a screen reference, it can't reliably open a panel,
-  // so this is just a stub target for future expansion.
+  // Optional IPC hook
   IpcHandler {
     target: "plugin:claw"
 
