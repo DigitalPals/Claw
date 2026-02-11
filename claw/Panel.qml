@@ -682,13 +682,19 @@ Item {
                 NIcon {
                   icon: modelData.systemImage || "message-circle"
                   color: Color.mOnSurface
+                  pointSize: Style.fontSizeXL
+                  Layout.preferredWidth: Math.ceil(Style.fontSizeXL * Style.uiScaleRatio * 2)
+                  Layout.alignment: Qt.AlignVCenter
+                  horizontalAlignment: Text.AlignHCenter
                 }
 
                 ColumnLayout {
                   Layout.fillWidth: true
+                  Layout.alignment: Qt.AlignVCenter
                   spacing: 2
 
                   NText {
+                    Layout.fillWidth: true
                     text: modelData.label || modelData.id || "Channel"
                     color: Color.mOnSurface
                     font.weight: Font.DemiBold
@@ -696,6 +702,7 @@ Item {
                   }
 
                   NText {
+                    Layout.fillWidth: true
                     text: modelData.detailLabel || ""
                     color: Color.mOnSurfaceVariant
                     pointSize: Style.fontSizeS
@@ -706,6 +713,7 @@ Item {
                 NIcon {
                   icon: "chevron-right"
                   color: Color.mOnSurfaceVariant
+                  Layout.alignment: Qt.AlignVCenter
                 }
               }
 

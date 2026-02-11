@@ -34,6 +34,60 @@ Item {
   property string selectedChannelId: ""
   property string activeSessionKey: ""
 
+  readonly property var _channelIconMap: ({
+    "main":       "terminal-2",
+    "webchat":    "world",
+    "slack":      "brand-slack",
+    "whatsapp":   "brand-whatsapp",
+    "telegram":   "brand-telegram",
+    "discord":    "brand-discord",
+    "messenger":  "brand-messenger",
+    "instagram":  "brand-instagram",
+    "sms":        "message-2",
+    "email":      "mail",
+    "voice":      "phone",
+    "twitter":    "brand-twitter",
+    "x":          "brand-twitter",
+    "teams":      "brand-teams",
+    "line":       "brand-line",
+    "wechat":     "brand-wechat",
+    "signal":     "brand-signal",
+    "viber":      "brand-viber",
+    "skype":      "brand-skype",
+    "facebook":   "brand-facebook",
+    "twitch":     "brand-twitch",
+    "youtube":    "brand-youtube",
+    "reddit":     "brand-reddit",
+    "tiktok":     "brand-tiktok"
+  })
+
+  readonly property var _channelLabelMap: ({
+    "main":       "Main (Direct)",
+    "webchat":    "Web Chat",
+    "slack":      "Slack",
+    "whatsapp":   "WhatsApp",
+    "telegram":   "Telegram",
+    "discord":    "Discord",
+    "messenger":  "Messenger",
+    "instagram":  "Instagram",
+    "sms":        "SMS",
+    "email":      "Email",
+    "voice":      "Voice",
+    "twitter":    "Twitter",
+    "x":          "X (Twitter)",
+    "teams":      "Microsoft Teams",
+    "line":       "LINE",
+    "wechat":     "WeChat",
+    "signal":     "Signal",
+    "viber":      "Viber",
+    "skype":      "Skype",
+    "facebook":   "Facebook",
+    "twitch":     "Twitch",
+    "youtube":    "YouTube",
+    "reddit":     "Reddit",
+    "tiktok":     "TikTok"
+  })
+
   // Streaming state
   property int _activeAssistantIndex: -1
   property string _activeAssistantText: ""
@@ -445,14 +499,13 @@ Item {
   }
 
   function _virtualChannelLabel(channelType) {
-    if (channelType === "main") return "Main (Direct)"
-    if (channelType === "webchat") return "Web Chat"
-    return channelType.charAt(0).toUpperCase() + channelType.slice(1)
+    return _channelLabelMap[channelType]
+      || (channelType.charAt(0).toUpperCase() + channelType.slice(1))
   }
 
-  function _virtualChannelIcon(channelType) {
-    if (channelType === "main") return "terminal-2"
-    if (channelType === "webchat") return "world"
+  function _resolveChannelIcon(channelId) {
+    if (_channelIconMap[channelId])
+      return _channelIconMap[channelId]
     return "message-circle"
   }
 
@@ -478,7 +531,7 @@ Item {
             id: cid,
             label: labels[cid] || cid,
             detailLabel: detailLabels[cid] || "",
-            systemImage: images[cid] || "message-circle"
+            systemImage: _resolveChannelIcon(cid)
           })
         }
       }
@@ -506,14 +559,17 @@ Item {
 
         // Build unified channel list: configured first, then virtual
         var unified = []
-        for (var k = 0; k < configuredMeta.length; k++)
-          unified.push(configuredMeta[k])
+        for (var k = 0; k < configuredMeta.length; k++) {
+          var cm = configuredMeta[k]
+          cm.systemImage = _resolveChannelIcon(cm.id)
+          unified.push(cm)
+        }
         for (var vch in virtualMap) {
           unified.push({
             id: vch,
             label: _virtualChannelLabel(vch),
             detailLabel: "",
-            systemImage: _virtualChannelIcon(vch),
+            systemImage: _resolveChannelIcon(vch),
             virtual: true
           })
         }
