@@ -126,12 +126,13 @@ Item {
     root._activeAssistantText = ""
   }
 
-  function appendMessage(role, content) {
+  function appendMessage(role, content, contentBlocks) {
     messagesModel.append({
       role: role,
       content: content,
       ts: Date.now(),
-      streaming: false
+      streaming: false,
+      contentBlocks: contentBlocks || ""
     })
     return messagesModel.count - 1
   }
@@ -634,9 +635,11 @@ Item {
         if (role === "user" || role === "assistant") {
           // Content may be a string or an array of content blocks
           var content = ""
+          var contentBlocks = ""
           if (typeof m.content === "string") {
             content = m.content
           } else if (Array.isArray(m.content)) {
+            contentBlocks = _extractContentBlocksJson(m.content)
             var parts = []
             for (var j = 0; j < m.content.length; j++) {
               var block = m.content[j]
@@ -645,13 +648,61 @@ Item {
             }
             content = parts.join("\n")
           }
-          if (content)
-            messages.push({ role: role, content: content })
+          if (content || contentBlocks)
+            messages.push({ role: role, content: content, contentBlocks: contentBlocks })
         }
       }
       if (callback)
         callback(messages)
     }, 15000)
+  }
+
+  function _extractContentBlocksJson(contentArray) {
+    // Only serialize if there are non-text blocks (images, etc.)
+    var hasNonText = false
+    for (var i = 0; i < contentArray.length; i++) {
+      if (contentArray[i] && contentArray[i].type !== "text") {
+        hasNonText = true
+        break
+      }
+    }
+    if (!hasNonText)
+      return ""
+    return JSON.stringify(contentArray)
+  }
+
+  function sendChatWithAttachments(sessionKey, messageText, attachments, contentBlocksJson) {
+    if (root.isSending)
+      return
+
+    var displayText = messageText || "(image)"
+    appendMessage("user", displayText, contentBlocksJson || "")
+    appendMessage("assistant", "...")
+    root._activeAssistantIndex = messagesModel.count - 1
+    messagesModel.setProperty(root._activeAssistantIndex, "streaming", true)
+    root._activeAssistantText = ""
+    root.isSending = true
+
+    var idempotencyKey = "claw-" + Date.now() + "-" + Math.random().toString(36).substring(2, 10)
+
+    _sendRequest("chat.send", {
+      sessionKey: sessionKey,
+      message: messageText || " ",
+      idempotencyKey: idempotencyKey,
+      attachments: attachments
+    }, function(res) {
+      if (!res.ok) {
+        var errMsg = (res.error && res.error.message) ? res.error.message : "Send failed"
+        if (root._activeAssistantIndex >= 0)
+          messagesModel.setProperty(root._activeAssistantIndex, "streaming", false)
+        setMessageContent(root._activeAssistantIndex, "Error: " + errMsg)
+        root.isSending = false
+        root._activeAssistantIndex = -1
+        root._activeAssistantText = ""
+        _maybeNotifyResponse(errMsg, true)
+      }
+      // On success, streaming events will arrive via chat events
+    }, 300000)
   }
 
   function sendChat(sessionKey, messageText) {
@@ -790,7 +841,7 @@ Item {
     fetchHistory(sessionKey, function(messages) {
       for (var i = 0; i < messages.length; i++) {
         var m = messages[i]
-        appendMessage(m.role || "assistant", m.content || "")
+        appendMessage(m.role || "assistant", m.content || "", m.contentBlocks || "")
       }
     })
   }

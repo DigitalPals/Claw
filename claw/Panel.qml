@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
+import Quickshell.Io
 import qs.Commons
 import qs.Widgets
 
@@ -57,6 +58,12 @@ Item {
   property bool editNotifyOnResponse: true
   property bool editNotifyOnlyWhenAppInactive: true
 
+  // Clipboard image capture state
+  property string pendingImageBase64: ""
+  property string pendingImageMediaType: ""
+  property bool isCapturingClipboard: false
+  property string _clipboardTypes: ""
+
   // Slash command menu state
   property bool commandMenuOpen: false
   property int commandSelectedIndex: 0
@@ -87,6 +94,57 @@ Item {
   // across panel close/reopen. Fall back to a local model if not available.
   ListModel { id: fallbackMessagesModel }
   ListModel { id: commandSuggestionsModel }
+
+  // Clipboard type detection process
+  Process {
+    id: clipboardTypeProcess
+    command: ["wl-paste", "--list-types"]
+    stdout: SplitParser {
+      onRead: data => {
+        root._clipboardTypes += data + "\n"
+      }
+    }
+    onExited: (exitCode, exitStatus) => {
+      if (exitCode !== 0) {
+        root.isCapturingClipboard = false
+        return
+      }
+      var types = root._clipboardTypes.trim().split("\n")
+      var imageType = ""
+      for (var i = 0; i < types.length; i++) {
+        var t = types[i].trim()
+        if (t === "image/png" || t === "image/jpeg" || t === "image/gif" || t === "image/webp") {
+          imageType = t
+          break
+        }
+      }
+      if (imageType) {
+        root.pendingImageMediaType = imageType
+        root.pendingImageBase64 = ""
+        clipboardImageProcess.command = ["bash", "-c", "wl-paste --type '" + imageType + "' | base64 -w0"]
+        clipboardImageProcess.running = true
+      } else {
+        root.isCapturingClipboard = false
+      }
+    }
+  }
+
+  // Clipboard image capture process (base64)
+  Process {
+    id: clipboardImageProcess
+    stdout: SplitParser {
+      onRead: data => {
+        root.pendingImageBase64 += data
+      }
+    }
+    onExited: (exitCode, exitStatus) => {
+      root.isCapturingClipboard = false
+      if (exitCode !== 0) {
+        root.pendingImageBase64 = ""
+        root.pendingImageMediaType = ""
+      }
+    }
+  }
 
   function msgModel() {
     if (main && main.messagesModel)
@@ -183,6 +241,19 @@ Item {
 
     if (!root.userScrolledUp)
       _scrollToEnd()
+  }
+
+  function tryPasteImage() {
+    if (root.isCapturingClipboard)
+      return
+    root.isCapturingClipboard = true
+    root._clipboardTypes = ""
+    clipboardTypeProcess.running = true
+  }
+
+  function clearPendingImage() {
+    root.pendingImageBase64 = ""
+    root.pendingImageMediaType = ""
   }
 
   function commandShouldOpen(text) {
@@ -358,6 +429,13 @@ Item {
   }
 
   function handleComposerKey(event) {
+    // Ctrl+V: try to capture image from clipboard (in addition to normal text paste)
+    if (event.key === Qt.Key_V && (event.modifiers & Qt.ControlModifier)) {
+      tryPasteImage()
+      // Don't accept event — let normal text paste proceed too
+      return
+    }
+
     if (!root.commandMenuOpen) {
       // Normal behavior: Enter sends.
       if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
@@ -409,12 +487,14 @@ Item {
       return
 
     var text = (composerInput.text || "").trim()
-    if (!text)
+    var hasImage = root.pendingImageBase64.length > 0
+
+    if (!text && !hasImage)
       return
 
     // Client-only slash commands (settings, channels, abort, agent) are handled locally.
     // All other /commands fall through and are sent to the gateway.
-    if (text[0] === "/") {
+    if (text && text[0] === "/") {
       var handled = runSlashCommand(text)
       if (handled) {
         composerInput.text = ""
@@ -427,7 +507,28 @@ Item {
     composerInput.text = ""
 
     if (main && root.activeSessionKey) {
-      main.sendChat(root.activeSessionKey, text)
+      if (hasImage) {
+        var attachments = [{
+          type: "image",
+          mimeType: root.pendingImageMediaType,
+          content: root.pendingImageBase64
+        }]
+        // Build content blocks for local display in message bubbles
+        var displayBlocks = [{
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: root.pendingImageMediaType,
+            data: root.pendingImageBase64
+          }
+        }]
+        if (text)
+          displayBlocks.push({ type: "text", text: text })
+        main.sendChatWithAttachments(root.activeSessionKey, text, attachments, JSON.stringify(displayBlocks))
+        clearPendingImage()
+      } else {
+        main.sendChat(root.activeSessionKey, text)
+      }
     } else {
       // Fallback: keep history in view if no active session
       _appendMessage("user", text)
@@ -876,6 +977,7 @@ Item {
               role: model.role
               content: model.content
               streaming: model.streaming || false
+              contentBlocks: model.contentBlocks || ""
             }
           }
         }
@@ -892,6 +994,51 @@ Item {
             root._scrollToEnd()
             if (main && main.markRead)
               main.markRead()
+          }
+        }
+      }
+
+      // Image preview strip (visible when an image is pending)
+      Rectangle {
+        Layout.fillWidth: true
+        visible: root.viewMode === "chat" && root.pendingImageBase64.length > 0
+        color: Color.mSurfaceVariant
+        radius: Style.radiusM
+        implicitHeight: imagePreviewRow.implicitHeight + Style.marginS * 2
+
+        RowLayout {
+          id: imagePreviewRow
+          anchors.fill: parent
+          anchors.margins: Style.marginS
+          spacing: Style.marginM
+
+          Image {
+            Layout.preferredWidth: 80 * Style.uiScaleRatio
+            Layout.preferredHeight: 80 * Style.uiScaleRatio
+            source: root.pendingImageBase64
+              ? ("data:" + root.pendingImageMediaType + ";base64," + root.pendingImageBase64)
+              : ""
+            fillMode: Image.PreserveAspectFit
+            sourceSize.width: 160
+            sourceSize.height: 160
+          }
+
+          NText {
+            text: {
+              var sizeBytes = Math.ceil(root.pendingImageBase64.length * 3 / 4)
+              if (sizeBytes < 1024) return sizeBytes + " B"
+              if (sizeBytes < 1048576) return Math.round(sizeBytes / 1024) + " KB"
+              return (sizeBytes / 1048576).toFixed(1) + " MB"
+            }
+            color: Color.mOnSurfaceVariant
+            pointSize: Style.fontSizeS
+          }
+
+          Item { Layout.fillWidth: true }
+
+          NIconButton {
+            icon: "x"
+            onClicked: root.clearPendingImage()
           }
         }
       }

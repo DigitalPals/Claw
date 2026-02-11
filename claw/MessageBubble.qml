@@ -11,6 +11,14 @@ Item {
   property string role: "assistant" // user | assistant | system
   property string content: ""
   property bool streaming: false
+  property string contentBlocks: ""
+
+  // Parsed content blocks (images + text). Empty when contentBlocks is unset.
+  readonly property var _parsedBlocks: {
+    if (!root.contentBlocks)
+      return []
+    try { return JSON.parse(root.contentBlocks) } catch (e) { return [] }
+  }
 
   // Layout contract for ListView: consumer sets width.
   implicitHeight: bubble.implicitHeight + Style.marginS
@@ -666,16 +674,61 @@ Item {
       width: parent.width - Style.marginM * 2
       spacing: Style.marginS
 
-      // Use a Controls text editor for selection/copy. Plain Text doesn't support interaction
-      // flags in Noctalia's Qt build.
+      // Content blocks rendering (images + text) when contentBlocks is set
+      Repeater {
+        model: root._parsedBlocks
+
+        delegate: Item {
+          width: contentColumn.width
+          implicitHeight: blockImage.visible ? blockImage.implicitHeight
+                        : blockText.visible ? blockText.implicitHeight
+                        : 0
+
+          Image {
+            id: blockImage
+            visible: modelData.type === "image"
+            width: Math.min(contentColumn.width, 400 * Style.uiScaleRatio)
+            fillMode: Image.PreserveAspectFit
+            sourceSize.width: 800
+            sourceSize.height: 800
+            source: {
+              if (modelData.type !== "image" || !modelData.source)
+                return ""
+              var s = modelData.source
+              return "data:" + (s.media_type || "image/png") + ";base64," + (s.data || "")
+            }
+          }
+
+          TextArea {
+            id: blockText
+            visible: modelData.type === "text"
+            width: contentColumn.width
+            height: visible ? implicitHeight : 0
+            textFormat: TextEdit.RichText
+            text: visible ? root.renderRichText(modelData.text || "") : ""
+            wrapMode: TextEdit.WordWrap
+            readOnly: true
+            selectByMouse: true
+            padding: 0; topPadding: 0; bottomPadding: 0; leftPadding: 0; rightPadding: 0
+            background: null
+            color: root.textColor()
+            font.pointSize: Math.max(1, Style.fontSizeM * Style.uiScaleRatio)
+            implicitHeight: visible ? Math.max(Style.fontSizeM * 1.6, contentHeight) : 0
+            implicitWidth: 0
+          }
+        }
+      }
+
+      // Plain text rendering (when no content blocks)
       TextArea {
         id: contentText
+        visible: root._parsedBlocks.length === 0
 
         width: parent.width
-        height: implicitHeight
+        height: visible ? implicitHeight : 0
 
         textFormat: root.streaming ? TextEdit.PlainText : TextEdit.RichText
-        text: root.streaming ? root.content : root.renderRichText(root.content)
+        text: visible ? (root.streaming ? root.content : root.renderRichText(root.content)) : ""
         wrapMode: TextEdit.WordWrap
         readOnly: true
         selectByMouse: true
@@ -690,7 +743,7 @@ Item {
         color: root.textColor()
         font.pointSize: Math.max(1, Style.fontSizeM * Style.uiScaleRatio)
 
-        implicitHeight: Math.max(Style.fontSizeM * 1.6, contentHeight)
+        implicitHeight: visible ? Math.max(Style.fontSizeM * 1.6, contentHeight) : 0
         implicitWidth: 0
 
         // Handle link clicks ourselves. Text interaction flags are not available in this environment.
@@ -733,7 +786,7 @@ Item {
         id: linkRow
         width: parent.width
         spacing: Style.marginS
-        visible: !root.streaming && urlRepeater.count > 0
+        visible: !root.streaming && root._parsedBlocks.length === 0 && urlRepeater.count > 0
 
         Repeater {
           id: urlRepeater
