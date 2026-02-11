@@ -103,6 +103,8 @@ Item {
   // Tick keepalive interval from server (default 15s)
   property int _tickIntervalMs: 15000
 
+  readonly property string _defaultWsUrl: "ws://127.0.0.1:18789"
+
   function setStatus(state, errorText) {
     root.connectionState = state || "idle"
     root.lastErrorText = errorText || ""
@@ -252,7 +254,7 @@ Item {
 
   WebSocket {
     id: ws
-    url: root._pickSetting("wsUrl", "ws://127.0.0.1:18789")
+    url: root._pickSetting("wsUrl", root._defaultWsUrl)
     active: false
 
     onStatusChanged: {
@@ -297,7 +299,7 @@ Item {
     repeat: false
     onTriggered: {
       if (!ws.active) {
-        ws.url = root._pickSetting("wsUrl", "ws://127.0.0.1:18789")
+        ws.url = root._pickSetting("wsUrl", root._defaultWsUrl)
         ws.active = true
       }
     }
@@ -324,6 +326,7 @@ Item {
     try {
       frame = JSON.parse(raw)
     } catch (e) {
+      console.warn("[Claw] Failed to parse frame:", e, raw.substring(0, 200))
       return
     }
 
@@ -361,10 +364,19 @@ Item {
           if (entry.timer)
             entry.timer.destroy()
           if (entry.callback)
-            entry.callback({ ok: false, error: { message: "Request timed out" } })
+            entry.callback({ ok: false, error: { message: "Request timed out: " + method } })
         }
       })
       timer.start()
+    }
+
+    // Guard: don't send on a closed socket — fail immediately
+    if (ws.status !== WebSocket.Open) {
+      if (timer)
+        timer.destroy()
+      if (callback)
+        callback({ ok: false, error: { message: "WebSocket not connected" } })
+      return null
     }
 
     var pending = root._pendingRequests
@@ -398,14 +410,21 @@ Item {
 
   function _cancelAllPending() {
     var pending = root._pendingRequests
+    root._pendingRequests = ({})
     for (var id in pending) {
       var entry = pending[id]
       if (entry.timer) {
         entry.timer.stop()
         entry.timer.destroy()
       }
+      if (entry.callback) {
+        try {
+          entry.callback({ ok: false, error: { message: "Connection lost" } })
+        } catch (e) {
+          console.warn("[Claw] Error in pending callback:", e)
+        }
+      }
     }
-    root._pendingRequests = ({})
   }
 
   // ──────────────────────────────────────────────
@@ -505,6 +524,7 @@ Item {
       var maxDelay = _pickSetting("reconnectMaxDelayMs", 30000)
       var delay = Math.min(1000 * Math.pow(2, root._reconnectAttempts - 1), maxDelay)
       root.setStatus("connecting", "Reconnecting in " + Math.round(delay / 1000) + "s...")
+      reconnectTimer.stop()
       reconnectTimer.interval = delay
       reconnectTimer.start()
     }
@@ -523,7 +543,7 @@ Item {
     disconnect()
     root._reconnectAttempts = 0
     root.setStatus("connecting", "")
-    var wsUrl = root._pickSetting("wsUrl", "ws://127.0.0.1:18789")
+    var wsUrl = root._pickSetting("wsUrl", root._defaultWsUrl)
     console.log("[Claw] reconnect() → url:", wsUrl, "pluginApi:", !!root.pluginApi)
     ws.url = wsUrl
     ws.active = true
@@ -718,6 +738,10 @@ Item {
   function sendChatWithAttachments(sessionKey, messageText, attachments, contentBlocksJson) {
     if (root.isSending)
       return
+    if (!sessionKey) {
+      console.warn("[Claw] sendChatWithAttachments: no sessionKey")
+      return
+    }
 
     var displayText = messageText || "(image)"
     appendMessage("user", displayText, contentBlocksJson || "")
@@ -752,6 +776,10 @@ Item {
   function sendChat(sessionKey, messageText) {
     if (root.isSending)
       return
+    if (!sessionKey) {
+      console.warn("[Claw] sendChat: no sessionKey")
+      return
+    }
 
     var t = (messageText || "").trim()
     if (!t)

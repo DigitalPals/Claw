@@ -49,6 +49,7 @@ Item {
   readonly property var channelMeta: main ? (main.channelMeta || []) : []
   readonly property var sessionsList: main ? (main.sessionsList || []) : []
   readonly property string activeSessionKey: main ? (main.activeSessionKey || "") : ""
+  onActiveSessionKeyChanged: clearPendingImage()
   readonly property string selectedChannelId: main ? (main.selectedChannelId || "") : ""
 
   // Local editable settings (used at runtime; Save persists).
@@ -513,6 +514,11 @@ Item {
       }
     }
 
+    if (root.connectionState !== "connected") {
+      root.appendSystemMessage("Not connected. Message not sent.")
+      return
+    }
+
     root.userScrolledUp = false
     composerInput.text = ""
 
@@ -579,6 +585,7 @@ Item {
               icon: "arrow-left"
               visible: root.viewMode !== "channels"
               onClicked: {
+                root.clearPendingImage()
                 if (main && main.navigateBack)
                   main.navigateBack()
               }
@@ -721,6 +728,8 @@ Item {
                 root.pluginApi.saveSettings()
 
                 // Trigger reconnect with new settings
+                if (root.isSending)
+                  console.warn("[Claw] Reconnecting while send is active; in-flight request will error")
                 if (main && main.reconnect)
                   main.reconnect()
               }
