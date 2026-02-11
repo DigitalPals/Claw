@@ -10,6 +10,7 @@ Item {
 
   property string role: "assistant" // user | assistant | system
   property string content: ""
+  property bool streaming: false
 
   // Layout contract for ListView: consumer sets width.
   implicitHeight: bubble.implicitHeight + Style.marginS
@@ -673,13 +674,11 @@ Item {
         width: parent.width
         height: implicitHeight
 
-        textFormat: TextEdit.RichText
-        text: root.renderRichText(root.content)
+        textFormat: root.streaming ? TextEdit.PlainText : TextEdit.RichText
+        text: root.streaming ? root.content : root.renderRichText(root.content)
         wrapMode: TextEdit.WordWrap
         readOnly: true
         selectByMouse: true
-        activeFocusOnPress: false
-        focusPolicy: Qt.NoFocus
 
         padding: 0
         topPadding: 0
@@ -734,11 +733,11 @@ Item {
         id: linkRow
         width: parent.width
         spacing: Style.marginS
-        visible: urlRepeater.count > 0
+        visible: !root.streaming && urlRepeater.count > 0
 
         Repeater {
           id: urlRepeater
-          model: root.extractUrls(root.content)
+          model: root.streaming ? [] : root.extractUrls(root.content)
 
           delegate: Rectangle {
             radius: Style.radiusS

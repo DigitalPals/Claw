@@ -834,6 +834,7 @@ Item {
 
         NScrollView {
           anchors.fill: parent
+          showGradientMasks: false
 
           ListView {
             id: chatList
@@ -874,6 +875,7 @@ Item {
               width: ListView.view.width
               role: model.role
               content: model.content
+              streaming: model.streaming || false
             }
           }
         }

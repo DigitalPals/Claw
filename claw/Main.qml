@@ -130,7 +130,8 @@ Item {
     messagesModel.append({
       role: role,
       content: content,
-      ts: Date.now()
+      ts: Date.now(),
+      streaming: false
     })
     return messagesModel.count - 1
   }
@@ -664,20 +665,21 @@ Item {
     appendMessage("user", t)
     appendMessage("assistant", "...")
     root._activeAssistantIndex = messagesModel.count - 1
+    messagesModel.setProperty(root._activeAssistantIndex, "streaming", true)
     root._activeAssistantText = ""
     root.isSending = true
 
     var idempotencyKey = "claw-" + Date.now() + "-" + Math.random().toString(36).substring(2, 10)
-    var agentId = String(_pickSetting("agentId", "main") || "").trim()
 
     _sendRequest("chat.send", {
       sessionKey: sessionKey,
       message: t,
-      agentId: agentId,
       idempotencyKey: idempotencyKey
     }, function(res) {
       if (!res.ok) {
         var errMsg = (res.error && res.error.message) ? res.error.message : "Send failed"
+        if (root._activeAssistantIndex >= 0)
+          messagesModel.setProperty(root._activeAssistantIndex, "streaming", false)
         setMessageContent(root._activeAssistantIndex, "Error: " + errMsg)
         root.isSending = false
         root._activeAssistantIndex = -1
@@ -685,7 +687,7 @@ Item {
         _maybeNotifyResponse(errMsg, true)
       }
       // On success, streaming events will arrive via chat events
-    }, 30000)
+    }, 300000)
   }
 
   function abortChat(sessionKey) {
@@ -731,14 +733,17 @@ Item {
       }
     } else if (state === "final") {
       var finalText = text || root._activeAssistantText
-      if (root._activeAssistantIndex >= 0)
+      if (root._activeAssistantIndex >= 0) {
+        messagesModel.setProperty(root._activeAssistantIndex, "streaming", false)
         setMessageContent(root._activeAssistantIndex, finalText || "(empty response)")
+      }
       _maybeNotifyResponse(finalText, false)
       root.isSending = false
       root._activeAssistantIndex = -1
       root._activeAssistantText = ""
     } else if (state === "aborted") {
       if (root._activeAssistantIndex >= 0) {
+        messagesModel.setProperty(root._activeAssistantIndex, "streaming", false)
         var abortedText = root._activeAssistantText || ""
         if (abortedText)
           setMessageContent(root._activeAssistantIndex, abortedText + "\n\n(aborted)")
@@ -752,8 +757,10 @@ Item {
       var errMsg = (payload.error && typeof payload.error === "string") ? payload.error
         : (payload.error && payload.error.message) ? payload.error.message
         : "Unknown error"
-      if (root._activeAssistantIndex >= 0)
+      if (root._activeAssistantIndex >= 0) {
+        messagesModel.setProperty(root._activeAssistantIndex, "streaming", false)
         setMessageContent(root._activeAssistantIndex, "Error: " + errMsg)
+      }
       _maybeNotifyResponse(errMsg, true)
       root.isSending = false
       root._activeAssistantIndex = -1
