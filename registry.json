@@ -4,7 +4,7 @@
     {
       "id": "claw",
       "name": "Claw",
-      "version": "0.1.19",
+      "version": "0.2.0",
       "official": false,
       "author": "DigitalPals",
       "description": "Menu bar chat panel for OpenClaw Gateway.",

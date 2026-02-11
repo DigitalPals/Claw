@@ -605,6 +605,17 @@ Item {
     return Color.mOnSurface
   }
 
+  property string _lastUrlContent: ""
+  property var _cachedUrls: []
+
+  function extractUrlsCached(raw) {
+    if (raw === root._lastUrlContent)
+      return root._cachedUrls
+    root._lastUrlContent = raw
+    root._cachedUrls = extractUrls(raw)
+    return root._cachedUrls
+  }
+
   function extractUrls(raw) {
     var s = (raw === null || raw === undefined) ? "" : String(raw)
     var re = new RegExp("(https?:\\/\\/[^\\s<]+)", "g")
@@ -634,18 +645,18 @@ Item {
     try {
       Quickshell.execDetached(["xdg-open", u])
       return
-    } catch (e) {}
+    } catch (e) { console.warn("[Claw] xdg-open failed:", e) }
 
     // Fallback (may be a no-op depending on environment).
     try {
       Qt.openUrlExternally(u)
       return
-    } catch (e2) {}
+    } catch (e2) { console.warn("[Claw] Qt.openUrlExternally failed:", e2) }
 
     try {
       if (ToastService && ToastService.showNotice)
         ToastService.showNotice("OpenClaw Chat", "Failed to open link: " + u, "alert-triangle")
-    } catch (e3) {}
+    } catch (e3) { console.warn("[Claw] Toast notification failed:", e3) }
   }
 
   Rectangle {
@@ -760,7 +771,7 @@ Item {
             try {
               if (contentText && typeof contentText.linkAt === "function")
                 return contentText.linkAt(mouse.x, mouse.y)
-            } catch (e) {}
+            } catch (e) { console.warn("[Claw] linkAt failed:", e) }
             return ""
           }
 
@@ -790,7 +801,7 @@ Item {
 
         Repeater {
           id: urlRepeater
-          model: root.streaming ? [] : root.extractUrls(root.content)
+          model: root.streaming ? [] : root.extractUrlsCached(root.content)
 
           delegate: Rectangle {
             radius: Style.radiusS

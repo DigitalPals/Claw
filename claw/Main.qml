@@ -173,6 +173,8 @@ Item {
       root.unreadSessions = fresh
   }
 
+  readonly property int _maxMessages: 500
+
   function appendMessage(role, content, contentBlocks) {
     messagesModel.append({
       role: role,
@@ -181,6 +183,16 @@ Item {
       streaming: false,
       contentBlocks: contentBlocks || ""
     })
+
+    // Trim oldest messages if over cap
+    while (messagesModel.count > root._maxMessages) {
+      messagesModel.remove(0)
+      if (root._activeAssistantIndex > 0)
+        root._activeAssistantIndex -= 1
+      else if (root._activeAssistantIndex === 0)
+        root._activeAssistantIndex = -1  // removed the active message
+    }
+
     return messagesModel.count - 1
   }
 
@@ -237,7 +249,7 @@ Item {
       try {
         if (Qt.application && Qt.application.active)
           return
-      } catch (e0) {}
+      } catch (e0) { console.warn("[Claw] Qt.application.active check failed:", e0) }
     }
 
     var title = "OpenClaw Chat"
@@ -357,19 +369,20 @@ Item {
       params: params || {}
     }
 
+    var effectiveTimeout = (timeoutMs && timeoutMs > 0) ? timeoutMs : 60000
     var timer = null
-    if (timeoutMs && timeoutMs > 0) {
+    {
       timer = Qt.createQmlObject(
         'import QtQuick; Timer { repeat: false }',
         root,
         "clawReqTimeout_" + id
       )
-      timer.interval = timeoutMs
+      timer.interval = effectiveTimeout
       timer.triggered.connect(function() {
         var entry = root._pendingRequests[id]
         if (entry) {
           delete root._pendingRequests[id]
-          try { if (entry.timer) entry.timer.destroy() } catch(e) {}
+          try { if (entry.timer) entry.timer.destroy() } catch(e) { console.warn("[Claw] Timer destroy failed:", e) }
           if (entry.callback)
             entry.callback({ ok: false, error: { message: "Request timed out: " + method } })
         }
@@ -407,7 +420,7 @@ Item {
     root._pendingRequests = pending
 
     if (entry.timer) {
-      try { entry.timer.stop(); entry.timer.destroy() } catch(e) {}
+      try { entry.timer.stop(); entry.timer.destroy() } catch(e) { console.warn("[Claw] Timer cleanup failed:", e) }
     }
 
     if (entry.callback)
@@ -420,7 +433,7 @@ Item {
     for (var id in pending) {
       var entry = pending[id]
       if (entry.timer) {
-        try { entry.timer.stop(); entry.timer.destroy() } catch(e) {}
+        try { entry.timer.stop(); entry.timer.destroy() } catch(e) { console.warn("[Claw] Timer cleanup failed:", e) }
       }
       if (entry.callback) {
         try {
@@ -515,12 +528,16 @@ Item {
     console.log("[Claw] _handleDisconnect:", reason, "state:", root.connectionState, "ws.active:", ws.active)
     connectFallbackTimer.stop()
     tickTimer.stop()
+
+    // Cancel pending requests FIRST so their error callbacks can still
+    // reference valid streaming state (_activeAssistantIndex, etc.)
     _cancelAllPending()
 
     // Don't overwrite a manual "idle" state
     if (root.connectionState !== "idle")
       root.setStatus("error", reason || "Disconnected")
 
+    // Now reset streaming state
     root.isSending = false
     root._activeAssistantIndex = -1
     root._activeAssistantText = ""
@@ -751,6 +768,10 @@ Item {
       console.warn("[Claw] sendChatWithAttachments: no sessionKey")
       return
     }
+    if ((messageText || "").length > 50000) {
+      console.warn("[Claw] Message too long, truncating")
+      messageText = messageText.substring(0, 50000)
+    }
 
     var displayText = messageText || "(image)"
     appendMessage("user", displayText, contentBlocksJson || "")
@@ -764,7 +785,7 @@ Item {
 
     _sendRequest("chat.send", {
       sessionKey: sessionKey,
-      message: messageText || " ",
+      message: (messageText || "").trim() || " ",
       idempotencyKey: idempotencyKey,
       attachments: attachments
     }, function(res) {
@@ -787,6 +808,10 @@ Item {
     var t = (messageText || "").trim()
     if (!t)
       return
+    if (t.length > 50000) {
+      console.warn("[Claw] Message too long, truncating")
+      t = t.substring(0, 50000)
+    }
 
     appendMessage("user", t)
     appendMessage("assistant", "...")
@@ -929,6 +954,9 @@ Item {
     root._activeAssistantText = ""
 
     fetchHistory(sessionKey, function(messages) {
+      // Discard if user navigated away during fetch
+      if (root.activeSessionKey !== sessionKey)
+        return
       for (var i = 0; i < messages.length; i++) {
         var m = messages[i]
         appendMessage(m.role || "assistant", m.content || "", m.contentBlocks || "")
