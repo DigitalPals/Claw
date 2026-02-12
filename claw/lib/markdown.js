@@ -202,33 +202,74 @@ function renderInlineNoCode(s) {
   return out
 }
 
-function renderInlineBoldAndLinks(s) {
+function renderInlineFormatting(s) {
   var raw = (s === null || s === undefined) ? "" : String(s)
-  var out = ""
-  var i = 0
 
-  while (i < raw.length) {
-    var open = raw.indexOf("**", i)
-    if (open === -1) {
-      out += renderInlineNoCode(raw.substring(i))
-      break
+  var delimiters = [
+    { open: "***", close: "***", openTag: "<b><i>", closeTag: "</i></b>", boundary: false },
+    { open: "___", close: "___", openTag: "<b><i>", closeTag: "</i></b>", boundary: true },
+    { open: "**", close: "**", openTag: "<b>", closeTag: "</b>", boundary: false },
+    { open: "__", close: "__", openTag: "<b>", closeTag: "</b>", boundary: true },
+    { open: "~~", close: "~~", openTag: "<s>", closeTag: "</s>", boundary: false },
+    { open: "*", close: "*", openTag: "<i>", closeTag: "</i>", boundary: false },
+    { open: "_", close: "_", openTag: "<i>", closeTag: "</i>", boundary: true },
+  ]
+
+  function isWordChar(ch) { return /[a-zA-Z0-9_]/.test(ch) }
+
+  function findDelim(str, delim, start, needBoundary) {
+    var pos = start
+    while (pos <= str.length - delim.length) {
+      var idx = str.indexOf(delim, pos)
+      if (idx === -1) return -1
+      if (!needBoundary) return idx
+
+      var before = idx > 0 ? str[idx - 1] : ""
+      var afterIdx = idx + delim.length
+      var after = afterIdx < str.length ? str[afterIdx] : ""
+
+      if (before && after && isWordChar(before) && isWordChar(after)) {
+        pos = idx + 1
+        continue
+      }
+      return idx
     }
-
-    out += renderInlineNoCode(raw.substring(i, open))
-
-    var close = raw.indexOf("**", open + 2)
-    if (close === -1) {
-      out += renderInlineNoCode(raw.substring(open))
-      break
-    }
-
-    var inner = raw.substring(open + 2, close)
-    out += "<b>" + renderInlineNoCode(inner) + "</b>"
-    i = close + 2
+    return -1
   }
 
-  return out
+  // Find the earliest opening delimiter
+  var bestPos = -1
+  var bestDelim = null
+
+  for (var d = 0; d < delimiters.length; d++) {
+    var pos = findDelim(raw, delimiters[d].open, 0, delimiters[d].boundary)
+    if (pos !== -1 && (bestPos === -1 || pos < bestPos)) {
+      bestPos = pos
+      bestDelim = delimiters[d]
+    }
+  }
+
+  if (bestDelim === null) {
+    return renderInlineNoCode(raw)
+  }
+
+  // Find closing delimiter
+  var closePos = findDelim(raw, bestDelim.close, bestPos + bestDelim.open.length, bestDelim.boundary)
+  if (closePos === -1) {
+    var unclosedEnd = bestPos + bestDelim.open.length
+    return renderInlineNoCode(raw.substring(0, unclosedEnd)) + renderInlineFormatting(raw.substring(unclosedEnd))
+  }
+
+  var before = raw.substring(0, bestPos)
+  var inner = raw.substring(bestPos + bestDelim.open.length, closePos)
+  var after = raw.substring(closePos + bestDelim.close.length)
+
+  return renderInlineNoCode(before)
+       + bestDelim.openTag + renderInlineFormatting(inner) + bestDelim.closeTag
+       + renderInlineFormatting(after)
 }
+
+function renderInlineBoldAndLinks(s) { return renderInlineFormatting(s) }
 
 function renderInlineMarkdownLite(line) {
   var raw0 = (line === null || line === undefined) ? "" : String(line)
@@ -237,7 +278,8 @@ function renderInlineMarkdownLite(line) {
     var ch = raw0[k]
     if (ch === "\\" && (k + 1) < raw0.length) {
       var next = raw0[k + 1]
-      if (next === "`" || next === "*" || next === "[" || next === "]" || next === "(" || next === ")") {
+      if (next === "`" || next === "*" || next === "[" || next === "]" || next === "(" || next === ")"
+          || next === "_" || next === "~" || next === "#" || next === "-" || next === ">") {
         raw += next
         k += 1
         continue
@@ -253,7 +295,7 @@ function renderInlineMarkdownLite(line) {
   function flushText() {
     if (!buf)
       return
-    out += renderInlineBoldAndLinks(buf)
+    out += renderInlineFormatting(buf)
     buf = ""
   }
 
@@ -274,7 +316,7 @@ function renderInlineMarkdownLite(line) {
   }
 
   if (inCode) {
-    out += renderInlineBoldAndLinks("`" + buf)
+    out += renderInlineFormatting("`" + buf)
   } else {
     flushText()
   }
@@ -325,7 +367,96 @@ function splitHyphenListLine(line) {
   return out
 }
 
-function markdownLiteToHtml(md) {
+var _keywords = null
+function _getKeywords() {
+  if (_keywords) return _keywords
+  _keywords = {}
+  var words = [
+    "export","if","then","else","elif","fi","for","in","do","done","while","until",
+    "case","esac","function","return","local","source","echo","sudo","cd","mkdir","rm",
+    "var","let","const","def","class","import","from","async","await","try","catch",
+    "except","finally","throw","new","this","self","switch","break","continue","yield",
+    "typeof","instanceof","raise","with","as","pass","lambda","print","not","and","or",
+    "func","defer","go","range","select","chan","struct","enum","impl","trait","pub",
+    "mod","use","fn","mut","loop","match","where","type","package","interface",
+    "true","false","null","undefined","None","True","False","nil",
+  ]
+  for (var i = 0; i < words.length; i++) _keywords[words[i]] = true
+  return _keywords
+}
+
+function syntaxHighlightCode(raw, opts) {
+  if (!opts) return escapeHtml(raw)
+  var lines = (raw || "").split("\n")
+  var result = []
+  for (var li = 0; li < lines.length; li++)
+    result.push(_highlightLine(lines[li], opts))
+  return result.join("\n")
+}
+
+function _highlightLine(line, opts) {
+  var trimmed = (line || "").replace(/^\s+/, "")
+
+  // Full-line comment: # or //
+  if ((trimmed[0] === "#" && trimmed[1] !== "!") || trimmed.substring(0, 2) === "//") {
+    if (opts.commentColor)
+      return '<span style="color: ' + opts.commentColor + ';">' + escapeHtml(line) + '</span>'
+    return escapeHtml(line)
+  }
+
+  var out = ""
+  var i = 0
+  var kw = _getKeywords()
+
+  while (i < line.length) {
+    // Strings
+    if (line[i] === '"' || line[i] === "'") {
+      var quote = line[i]
+      var j = i + 1
+      while (j < line.length && line[j] !== quote) {
+        if (line[j] === "\\") j++
+        j++
+      }
+      if (j < line.length) j++
+      var str = line.substring(i, j)
+      if (opts.stringColor)
+        out += '<span style="color: ' + opts.stringColor + ';">' + escapeHtml(str) + '</span>'
+      else
+        out += escapeHtml(str)
+      i = j
+      continue
+    }
+
+    // Inline comment: # preceded by whitespace
+    if (line[i] === "#" && i > 0 && /\s/.test(line[i - 1])) {
+      var rest = line.substring(i)
+      if (opts.commentColor)
+        out += '<span style="color: ' + opts.commentColor + ';">' + escapeHtml(rest) + '</span>'
+      else
+        out += escapeHtml(rest)
+      break
+    }
+
+    // Words (identifiers / keywords)
+    if (/[a-zA-Z_]/.test(line[i])) {
+      var j2 = i
+      while (j2 < line.length && /[a-zA-Z0-9_]/.test(line[j2])) j2++
+      var word = line.substring(i, j2)
+      if (kw[word] && opts.keywordColor)
+        out += '<span style="color: ' + opts.keywordColor + ';">' + escapeHtml(word) + '</span>'
+      else
+        out += escapeHtml(word)
+      i = j2
+      continue
+    }
+
+    out += escapeHtml(line[i])
+    i++
+  }
+  return out
+}
+
+function markdownLiteToHtml(md, styleOpts) {
   var s = (md === null || md === undefined) ? "" : String(md)
 
   s = s.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
@@ -334,22 +465,86 @@ function markdownLiteToHtml(md) {
   var out = ""
   var inFence = false
   var fenceBuf = ""
+  var listStack = []  // [{tag: "ul"/"ol", indent: number}]
+  var inBlockquote = false
+  var inTable = false
+  var tableRows = []
+  var tableHasHeader = false
+  var lastLineType = "none"
 
   function flushFence() {
-    var escaped = escapeHtml(fenceBuf)
-    out += "<pre><tt>" + escaped + "</tt></pre>"
+    var hlOpts = null
+    if (styleOpts && styleOpts.codeKeywordColor)
+      hlOpts = { keywordColor: styleOpts.codeKeywordColor, stringColor: styleOpts.codeStringColor, commentColor: styleOpts.codeCommentColor }
+    out += "<pre><tt>" + syntaxHighlightCode(fenceBuf, hlOpts) + "</tt></pre>"
     fenceBuf = ""
+  }
+
+  function flushTable() {
+    if (tableRows.length === 0) { inTable = false; return }
+    var borderColor = (styleOpts && styleOpts.tableBorder) ? styleOpts.tableBorder : ""
+    var cellStyle = borderColor
+        ? ' style="border: 1px solid ' + borderColor + '; padding: 4px 8px;"'
+        : ' style="padding: 4px 8px;"'
+    out += '<table cellspacing="0" cellpadding="0" style="border-collapse: collapse;">'
+    for (var ti = 0; ti < tableRows.length; ti++) {
+      out += "<tr>"
+      var tag = (tableHasHeader && ti === 0) ? "th" : "td"
+      for (var ci = 0; ci < tableRows[ti].length; ci++)
+        out += "<" + tag + cellStyle + ">" + renderInlineMarkdownLite(tableRows[ti][ci]) + "</" + tag + ">"
+      out += "</tr>"
+    }
+    out += "</table>"
+    tableRows = []
+    tableHasHeader = false
+    inTable = false
+  }
+
+  function getIndent(ln) {
+    var count = 0
+    for (var ci = 0; ci < (ln || "").length; ci++) {
+      if (ln[ci] === " ") count++
+      else if (ln[ci] === "\t") count += 4
+      else break
+    }
+    return count
+  }
+
+  function closeAllLists() {
+    while (listStack.length > 0)
+      out += "</" + listStack.pop().tag + ">"
+  }
+
+  function closeListsToIndent(indent) {
+    while (listStack.length > 0 && listStack[listStack.length - 1].indent > indent)
+      out += "</" + listStack.pop().tag + ">"
+  }
+
+  function closeBlockquote() {
+    if (inBlockquote) {
+      out += "</td></tr></table>"
+      inBlockquote = false
+    }
+  }
+
+  function closeBlocks() {
+    if (inTable) flushTable()
+    closeAllLists()
+    closeBlockquote()
   }
 
   for (var li = 0; li < lines.length; li++) {
     var line = lines[li]
     var trimmed = (line || "").trim()
 
+    // Fenced code blocks
     if (trimmed.indexOf("```") === 0) {
       if (inFence) {
         flushFence()
         inFence = false
+        lastLineType = "block"
       } else {
+        closeBlocks()
         inFence = true
         fenceBuf = ""
       }
@@ -363,12 +558,121 @@ function markdownLiteToHtml(md) {
       continue
     }
 
-    if (li > 0)
-      out += "<br/>"
-
-    if (!line) {
+    // Blank line — close open blocks
+    if (!trimmed) {
+      closeBlocks()
+      if (lastLineType === "text" || lastLineType === "blank")
+        out += "<br/>"
+      lastLineType = "blank"
       continue
     }
+
+    // Horizontal rule: ---, ***, ___  (3+ of the same character)
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+      closeBlocks()
+      out += "<hr/>"
+      lastLineType = "block"
+      continue
+    }
+
+    // Headings: # through ####
+    var headingMatch = trimmed.match(/^(#{1,4})\s+(.*)/)
+    if (headingMatch) {
+      closeBlocks()
+      var level = headingMatch[1].length
+      var hStyle = (styleOpts && styleOpts.headingColor) ? ' style="color: ' + styleOpts.headingColor + ';"' : ""
+      out += "<h" + level + hStyle + ">" + renderInlineMarkdownLite(headingMatch[2]) + "</h" + level + ">"
+      lastLineType = "block"
+      continue
+    }
+
+    // Unordered list: - text  or  * text
+    var ulMatch = trimmed.match(/^[-*]\s+(.*)/)
+    if (ulMatch) {
+      closeBlockquote()
+      var indent = getIndent(line)
+      closeListsToIndent(indent)
+      var top = listStack.length > 0 ? listStack[listStack.length - 1] : null
+      if (!top || top.indent < indent) {
+        listStack.push({ tag: "ul", indent: indent })
+        out += "<ul>"
+      } else if (top.tag !== "ul") {
+        out += "</" + listStack.pop().tag + ">"
+        listStack.push({ tag: "ul", indent: indent })
+        out += "<ul>"
+      }
+      out += "<li>" + renderInlineMarkdownLite(ulMatch[1]) + "</li>"
+      lastLineType = "block"
+      continue
+    }
+
+    // Ordered list: 1. text
+    var olMatch = trimmed.match(/^\d+\.\s+(.*)/)
+    if (olMatch) {
+      closeBlockquote()
+      var indent2 = getIndent(line)
+      closeListsToIndent(indent2)
+      var top2 = listStack.length > 0 ? listStack[listStack.length - 1] : null
+      if (!top2 || top2.indent < indent2) {
+        listStack.push({ tag: "ol", indent: indent2 })
+        out += "<ol>"
+      } else if (top2.tag !== "ol") {
+        out += "</" + listStack.pop().tag + ">"
+        listStack.push({ tag: "ol", indent: indent2 })
+        out += "<ol>"
+      }
+      out += "<li>" + renderInlineMarkdownLite(olMatch[1]) + "</li>"
+      lastLineType = "block"
+      continue
+    }
+
+    // Blockquote: > text
+    var bqMatch = trimmed.match(/^>\s?(.*)/)
+    if (bqMatch) {
+      if (inTable) flushTable()
+      closeAllLists()
+      if (!inBlockquote) {
+        inBlockquote = true
+        var borderColor = (styleOpts && styleOpts.blockquoteBorder) ? styleOpts.blockquoteBorder : "#808080"
+        var bqTextStyle = "padding-left: 8px;"
+        if (styleOpts && styleOpts.blockquoteColor) bqTextStyle += " color: " + styleOpts.blockquoteColor + ";"
+        out += '<table cellspacing="0" cellpadding="0"><tr>'
+            + '<td width="3" style="background-color: ' + borderColor + ';"></td>'
+            + '<td style="' + bqTextStyle + '">'
+      } else {
+        out += "<br/>"
+      }
+      out += renderInlineMarkdownLite(bqMatch[1])
+      lastLineType = "block"
+      continue
+    }
+
+    // Table row: | cell | cell |
+    if (trimmed[0] === "|" && trimmed[trimmed.length - 1] === "|") {
+      // Separator line: |---|---| (only pipes, dashes, colons, spaces)
+      if (/^[|\s:-]+$/.test(trimmed) && trimmed.indexOf("-") !== -1) {
+        if (inTable && tableRows.length > 0)
+          tableHasHeader = true
+        lastLineType = "block"
+        continue
+      }
+      if (!inTable) {
+        closeBlocks()
+        inTable = true
+      }
+      var cells = trimmed.substring(1, trimmed.length - 1).split("|")
+      var row = []
+      for (var ci = 0; ci < cells.length; ci++)
+        row.push(cells[ci].trim())
+      tableRows.push(row)
+      lastLineType = "block"
+      continue
+    }
+
+    // Regular text
+    closeBlocks()
+    if (lastLineType !== "none")
+      out += "<br/>"
 
     var logicalLines = splitHyphenListLine(line)
     for (var jj = 0; jj < logicalLines.length; jj++) {
@@ -376,12 +680,44 @@ function markdownLiteToHtml(md) {
         out += "<br/>"
       out += renderInlineMarkdownLite(logicalLines[jj])
     }
+    lastLineType = "text"
   }
 
+  closeBlocks()
   if (inFence) {
     if (out.length > 0)
       out += "<br/>"
     flushFence()
+  }
+
+  // Post-process: apply styleOpts for code styling
+  if (styleOpts) {
+    // Extract <pre> blocks to protect them from inline code styling
+    var prePlaceholders = []
+    out = out.replace(/<pre[^>]*>[\s\S]*?<\/pre>/g, function(match) {
+      var idx = prePlaceholders.length
+      var placeholder = "\x00PRE" + idx + "\x00"
+      prePlaceholders.push({ placeholder: placeholder, content: match })
+      return placeholder
+    })
+
+    // Style inline code
+    if (styleOpts.codeBg || styleOpts.codeColor) {
+      var codeStyle = ""
+      if (styleOpts.codeBg) codeStyle += "background-color: " + styleOpts.codeBg + ";"
+      if (styleOpts.codeColor) codeStyle += " color: " + styleOpts.codeColor + ";"
+      out = out.replace(/<tt>/g, '<span style="' + codeStyle + '"><tt>')
+      out = out.replace(/<\/tt>/g, '</tt></span>')
+    }
+
+    // Restore <pre> blocks with optional styling
+    for (var pi = 0; pi < prePlaceholders.length; pi++) {
+      var preContent = prePlaceholders[pi].content
+      if (styleOpts.codeBlockBg) {
+        preContent = preContent.replace(/<pre>/, '<pre style="background-color: ' + styleOpts.codeBlockBg + '; padding: 8px;">')
+      }
+      out = out.split(prePlaceholders[pi].placeholder).join(preContent)
+    }
   }
 
   return out

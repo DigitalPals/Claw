@@ -727,3 +727,378 @@ describe('extractUrls', () => {
     expect(M.extractUrls(undefined)).toEqual([])
   })
 })
+
+// ---------------------------------------------------------------------------
+// renderInlineFormatting
+// ---------------------------------------------------------------------------
+describe('renderInlineFormatting', () => {
+  it('renders *italic* as <i>italic</i>', () => {
+    expect(M.renderInlineFormatting('*italic*')).toBe('<i>italic</i>')
+  })
+
+  it('renders _italic_ as <i>italic</i>', () => {
+    expect(M.renderInlineFormatting('_italic_')).toBe('<i>italic</i>')
+  })
+
+  it('renders **bold** as <b>bold</b>', () => {
+    expect(M.renderInlineFormatting('**bold**')).toBe('<b>bold</b>')
+  })
+
+  it('renders __bold__ as <b>bold</b>', () => {
+    expect(M.renderInlineFormatting('__bold__')).toBe('<b>bold</b>')
+  })
+
+  it('renders ~~strikethrough~~ as <s>strikethrough</s>', () => {
+    expect(M.renderInlineFormatting('~~strikethrough~~')).toBe('<s>strikethrough</s>')
+  })
+
+  it('renders ***bold italic*** as <b><i>bold italic</i></b>', () => {
+    expect(M.renderInlineFormatting('***bold italic***')).toBe('<b><i>bold italic</i></b>')
+  })
+
+  it('renders ___bold italic___ as <b><i>bold italic</i></b>', () => {
+    expect(M.renderInlineFormatting('___bold italic___')).toBe('<b><i>bold italic</i></b>')
+  })
+
+  it('handles bold with nested italic', () => {
+    expect(M.renderInlineFormatting('**bold *nested* more**')).toBe(
+      '<b>bold <i>nested</i> more</b>'
+    )
+  })
+
+  it('handles mixed bold and italic', () => {
+    expect(M.renderInlineFormatting('**bold** and *italic*')).toBe(
+      '<b>bold</b> and <i>italic</i>'
+    )
+  })
+
+  it('handles mixed bold and strikethrough', () => {
+    expect(M.renderInlineFormatting('**bold** and ~~struck~~')).toBe(
+      '<b>bold</b> and <s>struck</s>'
+    )
+  })
+
+  it('treats unclosed * as literal text', () => {
+    expect(M.renderInlineFormatting('*unclosed')).toBe('*unclosed')
+  })
+
+  it('treats unclosed ~~ as literal text', () => {
+    expect(M.renderInlineFormatting('~~unclosed')).toBe('~~unclosed')
+  })
+
+  it('does not treat _ as italic inside words', () => {
+    expect(M.renderInlineFormatting('some_var_name')).toBe('some_var_name')
+  })
+
+  it('does not treat __ as bold inside words', () => {
+    expect(M.renderInlineFormatting('some__var__name')).toBe('some__var__name')
+  })
+
+  it('treats _ as italic at word boundaries', () => {
+    expect(M.renderInlineFormatting('a _text_ b')).toBe('a <i>text</i> b')
+  })
+
+  it('returns empty string for null', () => {
+    expect(M.renderInlineFormatting(null)).toBe('')
+  })
+
+  it('delegates plain text to renderInlineNoCode', () => {
+    expect(M.renderInlineFormatting('hello <b>')).toBe('hello &lt;b&gt;')
+  })
+
+  it('renders bold with a link inside', () => {
+    expect(M.renderInlineFormatting('**[click](https://example.com)**')).toBe(
+      '<b><a href="https://example.com">click</a></b>'
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// markdownLiteToHtml — block-level features
+// ---------------------------------------------------------------------------
+describe('markdownLiteToHtml block features', () => {
+  it('renders # heading as <h1>', () => {
+    expect(M.markdownLiteToHtml('# Title')).toBe('<h1>Title</h1>')
+  })
+
+  it('renders ## heading as <h2>', () => {
+    expect(M.markdownLiteToHtml('## Subtitle')).toBe('<h2>Subtitle</h2>')
+  })
+
+  it('renders ### heading as <h3>', () => {
+    expect(M.markdownLiteToHtml('### Section')).toBe('<h3>Section</h3>')
+  })
+
+  it('renders #### heading as <h4>', () => {
+    expect(M.markdownLiteToHtml('#### Sub-section')).toBe('<h4>Sub-section</h4>')
+  })
+
+  it('renders heading with inline formatting', () => {
+    expect(M.markdownLiteToHtml('# **Bold** title')).toBe('<h1><b>Bold</b> title</h1>')
+  })
+
+  it('renders unordered list with -', () => {
+    expect(M.markdownLiteToHtml('- item 1\n- item 2')).toBe(
+      '<ul><li>item 1</li><li>item 2</li></ul>'
+    )
+  })
+
+  it('renders unordered list with *', () => {
+    expect(M.markdownLiteToHtml('* item 1\n* item 2')).toBe(
+      '<ul><li>item 1</li><li>item 2</li></ul>'
+    )
+  })
+
+  it('renders ordered list', () => {
+    expect(M.markdownLiteToHtml('1. first\n2. second\n3. third')).toBe(
+      '<ol><li>first</li><li>second</li><li>third</li></ol>'
+    )
+  })
+
+  it('renders blockquote as table with border', () => {
+    const result = M.markdownLiteToHtml('> quoted text')
+    expect(result).toContain('<table')
+    expect(result).toContain('quoted text')
+    expect(result).toContain('</table>')
+  })
+
+  it('renders multi-line blockquote', () => {
+    const result = M.markdownLiteToHtml('> line 1\n> line 2')
+    expect(result).toContain('line 1<br/>line 2')
+    expect(result).toContain('</table>')
+  })
+
+  it('renders horizontal rule with ---', () => {
+    expect(M.markdownLiteToHtml('---')).toBe('<hr/>')
+  })
+
+  it('renders horizontal rule with ***', () => {
+    expect(M.markdownLiteToHtml('***')).toBe('<hr/>')
+  })
+
+  it('renders horizontal rule with ___', () => {
+    expect(M.markdownLiteToHtml('___')).toBe('<hr/>')
+  })
+
+  it('closes list before heading', () => {
+    expect(M.markdownLiteToHtml('- item\n# Heading')).toBe(
+      '<ul><li>item</li></ul><h1>Heading</h1>'
+    )
+  })
+
+  it('closes blockquote before list', () => {
+    const result = M.markdownLiteToHtml('> quote\n- item')
+    expect(result).toContain('quote')
+    expect(result).toContain('</table>')
+    expect(result).toContain('<ul><li>item</li></ul>')
+  })
+
+  it('blank line closes list', () => {
+    expect(M.markdownLiteToHtml('- item\n\ntext')).toBe(
+      '<ul><li>item</li></ul><br/>text'
+    )
+  })
+
+  it('switches from ul to ol', () => {
+    expect(M.markdownLiteToHtml('- bullet\n1. number')).toBe(
+      '<ul><li>bullet</li></ul><ol><li>number</li></ol>'
+    )
+  })
+
+  it('renders mixed heading, list, text', () => {
+    const input = '# Title\n- item 1\n- item 2\nsome text'
+    expect(M.markdownLiteToHtml(input)).toBe(
+      '<h1>Title</h1><ul><li>item 1</li><li>item 2</li></ul><br/>some text'
+    )
+  })
+
+  it('does not apply splitHyphenListLine to list items', () => {
+    // "A - B - C" as a list item should remain intact
+    expect(M.markdownLiteToHtml('- A - B - C')).toBe(
+      '<ul><li>A - B - C</li></ul>'
+    )
+  })
+
+  it('applies splitHyphenListLine to regular text', () => {
+    // Regular text with hyphen separators is still split
+    const result = M.markdownLiteToHtml('A - B - C')
+    expect(result).toContain('- B')
+    expect(result).toContain('- C')
+  })
+
+  it('renders nested unordered list', () => {
+    const input = '- item 1\n- item 2\n    - nested a\n    - nested b\n- item 3'
+    expect(M.markdownLiteToHtml(input)).toBe(
+      '<ul><li>item 1</li><li>item 2</li><ul><li>nested a</li><li>nested b</li></ul><li>item 3</li></ul>'
+    )
+  })
+
+  it('renders nested ordered list', () => {
+    const input = '1. first\n2. second\n    1. sub-a\n    2. sub-b\n3. third'
+    expect(M.markdownLiteToHtml(input)).toBe(
+      '<ol><li>first</li><li>second</li><ol><li>sub-a</li><li>sub-b</li></ol><li>third</li></ol>'
+    )
+  })
+
+  it('renders mixed nested list types', () => {
+    const input = '- bullet\n    1. numbered\n    2. numbered'
+    expect(M.markdownLiteToHtml(input)).toBe(
+      '<ul><li>bullet</li><ol><li>numbered</li><li>numbered</li></ol></ul>'
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// markdownLiteToHtml — styleOpts
+// ---------------------------------------------------------------------------
+describe('markdownLiteToHtml styleOpts', () => {
+  const opts = {
+    codeBg: '#112233',
+    codeBlockBg: '#445566',
+    blockquoteBorder: '#778899',
+  }
+
+  it('wraps inline <tt> with styled span', () => {
+    const result = M.markdownLiteToHtml('use `code` here', opts)
+    expect(result).toContain('<span style="background-color: #112233;"><tt>code</tt></span>')
+  })
+
+  it('styles <pre> blocks with codeBlockBg', () => {
+    const result = M.markdownLiteToHtml('```\ncode\n```', opts)
+    expect(result).toContain('background-color: #445566; padding: 8px;')
+  })
+
+  it('does not style <tt> inside <pre> with codeBg', () => {
+    const result = M.markdownLiteToHtml('```\ncode\n```', opts)
+    // The <tt> inside <pre> should NOT be wrapped with codeBg span
+    expect(result).not.toContain('#112233')
+  })
+
+  it('styles blockquote with border color via table cell', () => {
+    const result = M.markdownLiteToHtml('> quoted', opts)
+    expect(result).toContain('background-color: #778899')
+    expect(result).toContain('quoted')
+  })
+
+  it('works without styleOpts (backward compat)', () => {
+    const result = M.markdownLiteToHtml('use `code` here')
+    expect(result).toBe('use <tt>code</tt> here')
+  })
+
+  it('styles table borders', () => {
+    const input = '| A | B |\n|---|---|\n| 1 | 2 |'
+    const result = M.markdownLiteToHtml(input, opts)
+    expect(result).toContain('<table')
+    expect(result).toContain('<th')
+    expect(result).toContain('<td')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// markdownLiteToHtml — tables
+// ---------------------------------------------------------------------------
+describe('markdownLiteToHtml tables', () => {
+  it('renders a basic table with header', () => {
+    const input = '| Header 1 | Header 2 |\n|----------|----------|\n| Cell 1 | Cell 2 |'
+    const result = M.markdownLiteToHtml(input)
+    expect(result).toContain('<table')
+    expect(result).toContain('<th')
+    expect(result).toContain('Header 1')
+    expect(result).toContain('<td')
+    expect(result).toContain('Cell 1')
+    expect(result).toContain('</table>')
+  })
+
+  it('renders table without header (no separator line)', () => {
+    const input = '| A | B |\n| 1 | 2 |'
+    const result = M.markdownLiteToHtml(input)
+    expect(result).toContain('<td')
+    expect(result).not.toContain('<th')
+  })
+
+  it('renders inline formatting in table cells', () => {
+    const input = '| **bold** | *italic* |\n|---|---|\n| `code` | text |'
+    const result = M.markdownLiteToHtml(input)
+    expect(result).toContain('<b>bold</b>')
+    expect(result).toContain('<i>italic</i>')
+    expect(result).toContain('<tt>code</tt>')
+  })
+
+  it('closes table before other blocks', () => {
+    const input = '| A | B |\n|---|---|\n| 1 | 2 |\n# Heading'
+    const result = M.markdownLiteToHtml(input)
+    expect(result).toContain('</table><h1>Heading</h1>')
+  })
+
+  it('renders multiple-row table', () => {
+    const input = '| H1 | H2 |\n|---|---|\n| a | b |\n| c | d |'
+    const result = M.markdownLiteToHtml(input)
+    // 1 header row + 2 data rows = 3 <tr> tags
+    const trCount = (result.match(/<tr>/g) || []).length
+    expect(trCount).toBe(3)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// syntaxHighlightCode
+// ---------------------------------------------------------------------------
+describe('syntaxHighlightCode', () => {
+  const hlOpts = {
+    keywordColor: '#00ff00',
+    stringColor: '#ffff00',
+    commentColor: '#888888',
+  }
+
+  it('returns escaped HTML when opts is null', () => {
+    expect(M.syntaxHighlightCode('<b>', null)).toBe('&lt;b&gt;')
+  })
+
+  it('highlights keywords', () => {
+    const result = M.syntaxHighlightCode('export FOO', hlOpts)
+    expect(result).toContain('color: #00ff00')
+    expect(result).toContain('export')
+    expect(result).toContain('FOO')
+  })
+
+  it('highlights strings in double quotes', () => {
+    const result = M.syntaxHighlightCode('x="hello"', hlOpts)
+    expect(result).toContain('color: #ffff00')
+    expect(result).toContain('&quot;hello&quot;')
+  })
+
+  it('highlights strings in single quotes', () => {
+    const result = M.syntaxHighlightCode("x='hello'", hlOpts)
+    expect(result).toContain('color: #ffff00')
+    expect(result).toContain("&#39;hello&#39;")
+  })
+
+  it('highlights full-line comments with #', () => {
+    const result = M.syntaxHighlightCode('# comment here', hlOpts)
+    expect(result).toContain('color: #888888')
+    expect(result).toContain('# comment here')
+  })
+
+  it('highlights full-line comments with //', () => {
+    const result = M.syntaxHighlightCode('// comment here', hlOpts)
+    expect(result).toContain('color: #888888')
+  })
+
+  it('does not color non-keywords', () => {
+    const result = M.syntaxHighlightCode('myFunction()', hlOpts)
+    expect(result).not.toContain('color:')
+  })
+
+  it('handles mixed keywords, strings, comments', () => {
+    const result = M.syntaxHighlightCode('export KEY="value" # set key', hlOpts)
+    expect(result).toContain('#00ff00')  // keyword
+    expect(result).toContain('#ffff00')  // string
+    expect(result).toContain('#888888')  // comment
+  })
+
+  it('handles multi-line code', () => {
+    const result = M.syntaxHighlightCode('# header\nexport X="y"', hlOpts)
+    expect(result).toContain('\n')
+    expect(result).toContain('#888888')  // comment line
+    expect(result).toContain('#00ff00')  // keyword line
+  })
+})
