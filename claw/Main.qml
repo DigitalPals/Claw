@@ -18,6 +18,7 @@ Item {
 
   // Request/UX state (owned by main so it survives panel close).
   property bool isSending: false
+  readonly property bool isStreaming: root._activeAssistantIndex >= 0
   property int _panelActiveCount: 0
   readonly property bool panelActive: _panelActiveCount > 0
   property bool popoutWindowVisible: false
@@ -794,30 +795,41 @@ Item {
     // Active session: handle streaming UI as before
     if (sessionKey === root.activeSessionKey) {
       if (state === "delta") {
-        if (root._activeAssistantIndex >= 0) {
-          root._activeAssistantText = text
-          setMessageContent(root._activeAssistantIndex, text || "...")
+        if (root._activeAssistantIndex < 0) {
+          // Server-initiated or multi-cycle: create placeholder
+          appendMessage("assistant", "...")
+          root._activeAssistantIndex = messagesModel.count - 1
+          messagesModel.setProperty(root._activeAssistantIndex, "streaming", true)
+          root._activeAssistantText = ""
         }
+        root._activeAssistantText = text
+        setMessageContent(root._activeAssistantIndex, text || "...")
       } else if (state === "final") {
-        var finalText = text || root._activeAssistantText
-        _finishStreaming(root._activeAssistantIndex)
-        setMessageContent(root._activeAssistantIndex, finalText || "(empty response)")
+        var finalText = root._activeAssistantText || text
+        if (root._activeAssistantIndex >= 0) {
+          _finishStreaming(root._activeAssistantIndex)
+          setMessageContent(root._activeAssistantIndex, finalText || "(empty response)")
+        }
         _maybeNotifyResponse(finalText, false)
         _endStreaming()
       } else if (state === "aborted") {
-        _finishStreaming(root._activeAssistantIndex)
-        var abortedText = root._activeAssistantText || ""
-        if (abortedText)
-          setMessageContent(root._activeAssistantIndex, abortedText + "\n\n(aborted)")
-        else
-          setMessageContent(root._activeAssistantIndex, "(aborted)")
+        if (root._activeAssistantIndex >= 0) {
+          _finishStreaming(root._activeAssistantIndex)
+          var abortedText = root._activeAssistantText || ""
+          if (abortedText)
+            setMessageContent(root._activeAssistantIndex, abortedText + "\n\n(aborted)")
+          else
+            setMessageContent(root._activeAssistantIndex, "(aborted)")
+        }
         _endStreaming()
       } else if (state === "error") {
         var errMsg = (payload.error && typeof payload.error === "string") ? payload.error
           : (payload.error && payload.error.message) ? payload.error.message
           : "Unknown error"
-        _finishStreaming(root._activeAssistantIndex)
-        setMessageContent(root._activeAssistantIndex, "Error: " + errMsg)
+        if (root._activeAssistantIndex >= 0) {
+          _finishStreaming(root._activeAssistantIndex)
+          setMessageContent(root._activeAssistantIndex, "Error: " + errMsg)
+        }
         _maybeNotifyResponse(errMsg, true)
         _endStreaming()
       }

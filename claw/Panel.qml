@@ -42,6 +42,7 @@ Item {
   // UI state
   property bool showSettings: false
   readonly property bool isSending: main ? !!main.isSending : false
+  readonly property bool isStreaming: main ? !!main.isStreaming : false
   readonly property string lastErrorText: main ? (main.lastErrorText || "") : ""
   readonly property bool hasUnread: main ? !!main.hasUnread : false
   readonly property string connectionState: main ? (main.connectionState || "idle") : "idle"
@@ -1023,6 +1024,48 @@ Item {
               content: model.content
               streaming: model.streaming || false
               contentBlocks: model.contentBlocks || ""
+            }
+
+            footer: Item {
+              width: ListView.view.width
+              height: thinkingRow.visible ? thinkingRow.implicitHeight + Style.marginM * 2 : 0
+
+              Row {
+                id: thinkingRow
+                visible: root.isStreaming || root.isSending
+                anchors.left: parent.left
+                anchors.leftMargin: Style.marginM
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.marginS
+
+                NText {
+                  text: "Thinking"
+                  color: Color.mOnSurfaceVariant
+                  pointSize: Style.fontSizeS
+                  font.italic: true
+                }
+
+                Repeater {
+                  model: 3
+                  NText {
+                    required property int index
+                    text: "."
+                    color: Color.mOnSurfaceVariant
+                    pointSize: Style.fontSizeS
+                    font.italic: true
+                    opacity: 0.3
+
+                    SequentialAnimation on opacity {
+                      running: thinkingRow.visible
+                      loops: Animation.Infinite
+                      PauseAnimation { duration: index * 300 }
+                      NumberAnimation { to: 1.0; duration: 400; easing.type: Easing.InOutQuad }
+                      NumberAnimation { to: 0.3; duration: 400; easing.type: Easing.InOutQuad }
+                      PauseAnimation { duration: (2 - index) * 300 }
+                    }
+                  }
+                }
+              }
             }
           }
         }
