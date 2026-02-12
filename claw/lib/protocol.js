@@ -29,16 +29,22 @@ function extractTextFromContent(content) {
 }
 
 function extractContentBlocksJson(contentArray) {
-  var hasNonText = false
+  var displayable = []
   for (var i = 0; i < contentArray.length; i++) {
-    if (contentArray[i] && contentArray[i].type !== "text") {
-      hasNonText = true
+    var block = contentArray[i]
+    if (block && (block.type === "text" || block.type === "image"))
+      displayable.push(block)
+  }
+  var hasImage = false
+  for (var j = 0; j < displayable.length; j++) {
+    if (displayable[j].type === "image") {
+      hasImage = true
       break
     }
   }
-  if (!hasNonText)
+  if (!hasImage)
     return ""
-  return JSON.stringify(contentArray)
+  return JSON.stringify(displayable)
 }
 
 function truncateForToast(s, maxLen) {

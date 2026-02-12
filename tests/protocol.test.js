@@ -110,13 +110,27 @@ describe('extractContentBlocksJson', () => {
     expect(result).toBe(JSON.stringify(blocks))
   })
 
-  it('returns JSON string for mixed text and non-text blocks', () => {
+  it('returns JSON with only displayable blocks for mixed text and image', () => {
     const blocks = [
       { type: 'text', text: 'hello' },
       { type: 'image', source: { data: 'xyz' } },
     ]
     const result = P.extractContentBlocksJson(blocks)
     expect(result).toBe(JSON.stringify(blocks))
+  })
+
+  it('strips non-displayable blocks from output', () => {
+    const blocks = [
+      { type: 'thinking', thinking: 'hmm' },
+      { type: 'text', text: 'hello' },
+      { type: 'image', source: { data: 'xyz' } },
+      { type: 'tool_use', id: 't1', name: 'search' },
+    ]
+    const result = JSON.parse(P.extractContentBlocksJson(blocks))
+    expect(result).toEqual([
+      { type: 'text', text: 'hello' },
+      { type: 'image', source: { data: 'xyz' } },
+    ])
   })
 
   it('returns empty string for a single text block', () => {
@@ -126,6 +140,30 @@ describe('extractContentBlocksJson', () => {
 
   it('returns empty string for an empty array', () => {
     expect(P.extractContentBlocksJson([])).toBe('')
+  })
+
+  it('returns empty string for thinking-only blocks', () => {
+    const blocks = [{ type: 'thinking', thinking: 'pondering' }]
+    expect(P.extractContentBlocksJson(blocks)).toBe('')
+  })
+
+  it('returns empty string for tool_use-only blocks', () => {
+    const blocks = [{ type: 'tool_use', id: 't1', name: 'search', input: {} }]
+    expect(P.extractContentBlocksJson(blocks)).toBe('')
+  })
+
+  it('returns empty string for tool_result-only blocks', () => {
+    const blocks = [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }]
+    expect(P.extractContentBlocksJson(blocks)).toBe('')
+  })
+
+  it('returns empty string for mixed non-displayable + text (no image)', () => {
+    const blocks = [
+      { type: 'thinking', thinking: 'hmm' },
+      { type: 'text', text: 'hello' },
+      { type: 'tool_use', id: 't1', name: 'search' },
+    ]
+    expect(P.extractContentBlocksJson(blocks)).toBe('')
   })
 })
 
