@@ -436,8 +436,11 @@ Item {
     }
 
     if (!root.commandMenuOpen) {
-      // Normal behavior: Enter sends.
+      // Normal behavior: Enter sends, Shift+Enter inserts newline.
       if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+        if (event.modifiers & Qt.ShiftModifier) {
+          return
+        }
         root.sendMessage()
         event.accepted = true
       }
@@ -1149,19 +1152,64 @@ Item {
         spacing: Style.marginM
         visible: root.viewMode === "chat"
 
-        Item {
+        Control {
           id: composerArea
           Layout.fillWidth: true
-          implicitHeight: composerInput.implicitHeight
+          implicitHeight: Math.min(
+            composerScroll.contentHeight,
+            150 * Style.uiScaleRatio  // max ~6 lines
+          )
 
-          NTextInput {
-            id: composerInput
-            anchors.fill: parent
-            placeholderText: "Message..."
-            enabled: !root.isSending
+          focusPolicy: Qt.StrongFocus
 
-            onTextChanged: rebuildCommandSuggestions(text)
-            Keys.onPressed: handleComposerKey(event)
+          background: Rectangle {
+            radius: Style.iRadiusM
+            color: Color.mSurface
+            border.color: composerInput.activeFocus ? Color.mSecondary : Color.mOutline
+            border.width: Style.borderS
+            Behavior on border.color {
+              ColorAnimation { duration: Style.animationFast }
+            }
+          }
+
+          contentItem: Flickable {
+            id: composerScroll
+            clip: true
+            contentWidth: width
+            contentHeight: composerInput.implicitHeight
+            flickableDirection: Flickable.VerticalFlick
+            boundsBehavior: Flickable.StopAtBounds
+
+            function ensureCursorVisible() {
+              var cursorRect = composerInput.cursorRectangle;
+              var cy = cursorRect.y;
+              var ch = cursorRect.height;
+              if (cy < contentY) contentY = cy;
+              else if (cy + ch > contentY + height) contentY = cy + ch - height;
+            }
+
+            TextArea {
+              id: composerInput
+              width: composerScroll.width
+              wrapMode: TextEdit.Wrap
+              placeholderText: "Message..."
+              enabled: !root.isSending
+
+              color: Color.mOnSurface
+              placeholderTextColor: Qt.alpha(Color.mOnSurfaceVariant, 0.6)
+              selectionColor: Color.mSecondary
+              selectedTextColor: Color.mOnSecondary
+              font.family: Settings.data.ui.fontDefault
+              font.pointSize: Style.fontSizeS * Style.uiScaleRatio
+              font.weight: Style.fontWeightRegular
+
+              padding: Style.marginM
+              background: null
+
+              onTextChanged: rebuildCommandSuggestions(text)
+              Keys.onPressed: handleComposerKey(event)
+              onCursorRectangleChanged: composerScroll.ensureCursorVisible()
+            }
           }
 
           // Slash command dropdown
