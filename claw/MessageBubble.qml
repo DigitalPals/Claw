@@ -24,19 +24,6 @@ Item {
   // Layout contract for ListView: consumer sets width.
   implicitHeight: bubble.implicitHeight + Style.marginS
 
-  function _escapeHtml(s) { return Markdown.escapeHtml(s) }
-  function sanitizeUrlToken(url) { return Markdown.sanitizeUrlToken(url) }
-  function _autoLinkBareUrlsInMarkdown(md) { return Markdown.autoLinkBareUrlsInMarkdown(md) }
-  function _renderPlainWithLinks(s) { return Markdown.renderPlainWithLinks(s) }
-  function _renderInlineNoCode(s) { return Markdown.renderInlineNoCode(s) }
-  function _renderInlineFormatting(s) { return Markdown.renderInlineFormatting(s) }
-  function _renderInlineBoldAndLinks(s) { return Markdown.renderInlineBoldAndLinks(s) }
-  function _renderInlineMarkdownLite(line) { return Markdown.renderInlineMarkdownLite(line) }
-  function _splitHyphenListLine(line) { return Markdown.splitHyphenListLine(line) }
-  function _markdownLiteToHtml(md, styleOpts) { return Markdown.markdownLiteToHtml(md, styleOpts) }
-  function _basicMarkdownToHtml(md) { return Markdown.markdownLiteToHtml(md) }
-  function normalizeMarkdownForDisplay(md, forceHardLineBreaks) { return Markdown.normalizeMarkdownForDisplay(md, forceHardLineBreaks) }
-
   function renderRichText(raw) {
     var md = (raw === null || raw === undefined) ? "" : String(raw)
     var fg = root.textColor()
@@ -59,8 +46,8 @@ Item {
 
     // Always use our controlled renderer for consistent spacing across Qt builds.
     // (Qt.convertFromMarkdown output often loses paragraph/list spacing in this environment.)
-    var md0 = normalizeMarkdownForDisplay(md, false)
-    return '<div style="color: ' + fg + ';">' + _markdownLiteToHtml(md0, styleOpts) + "</div>"
+    var md0 = Markdown.normalizeMarkdownForDisplay(md, false)
+    return '<div style="color: ' + fg + ';">' + Markdown.markdownLiteToHtml(md0, styleOpts) + "</div>"
   }
 
   function bubbleColor() {
@@ -96,14 +83,12 @@ Item {
     if (raw === root._lastUrlContent)
       return root._cachedUrls
     root._lastUrlContent = raw
-    root._cachedUrls = extractUrls(raw)
+    root._cachedUrls = Markdown.extractUrls(raw)
     return root._cachedUrls
   }
 
-  function extractUrls(raw) { return Markdown.extractUrls(raw) }
-
   function openUrl(url) {
-    var u = sanitizeUrlToken(url)
+    var u = Markdown.sanitizeUrlToken(url)
     if (!u)
       return
 

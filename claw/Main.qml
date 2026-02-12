@@ -5,6 +5,8 @@ import Quickshell.Io
 import qs.Commons
 import qs.Services.UI
 import "lib/protocol.js" as Protocol
+import "lib/settings.js" as SettingsLib
+import "lib/channels.js" as Channels
 
 Item {
   id: root
@@ -38,60 +40,6 @@ Item {
   property string viewMode: "channels"   // "channels" | "sessions" | "chat"
   property string selectedChannelId: ""
   property string activeSessionKey: ""
-
-  readonly property var _channelIconMap: ({
-    "main":       "terminal-2",
-    "webchat":    "world",
-    "slack":      "brand-slack",
-    "whatsapp":   "brand-whatsapp",
-    "telegram":   "brand-telegram",
-    "discord":    "brand-discord",
-    "messenger":  "brand-messenger",
-    "instagram":  "brand-instagram",
-    "sms":        "message-2",
-    "email":      "mail",
-    "voice":      "phone",
-    "twitter":    "brand-twitter",
-    "x":          "brand-twitter",
-    "teams":      "brand-teams",
-    "line":       "brand-line",
-    "wechat":     "brand-wechat",
-    "signal":     "brand-signal",
-    "viber":      "brand-viber",
-    "skype":      "brand-skype",
-    "facebook":   "brand-facebook",
-    "twitch":     "brand-twitch",
-    "youtube":    "brand-youtube",
-    "reddit":     "brand-reddit",
-    "tiktok":     "brand-tiktok"
-  })
-
-  readonly property var _channelLabelMap: ({
-    "main":       "Main (Direct)",
-    "webchat":    "Web Chat",
-    "slack":      "Slack",
-    "whatsapp":   "WhatsApp",
-    "telegram":   "Telegram",
-    "discord":    "Discord",
-    "messenger":  "Messenger",
-    "instagram":  "Instagram",
-    "sms":        "SMS",
-    "email":      "Email",
-    "voice":      "Voice",
-    "twitter":    "Twitter",
-    "x":          "X (Twitter)",
-    "teams":      "Microsoft Teams",
-    "line":       "LINE",
-    "wechat":     "WeChat",
-    "signal":     "Signal",
-    "viber":      "Viber",
-    "skype":      "Skype",
-    "facebook":   "Facebook",
-    "twitch":     "Twitch",
-    "youtube":    "YouTube",
-    "reddit":     "Reddit",
-    "tiktok":     "TikTok"
-  })
 
   // Status bar data (populated from server events / discovery)
   property string activeModel: ""
@@ -190,16 +138,8 @@ Item {
   }
 
   function _pickSetting(key, fallback) {
-    if (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings[key] !== undefined)
-      return pluginApi.pluginSettings[key]
-    if (pluginApi && pluginApi.manifest && pluginApi.manifest.metadata
-        && pluginApi.manifest.metadata.defaultSettings
-        && pluginApi.manifest.metadata.defaultSettings[key] !== undefined)
-      return pluginApi.manifest.metadata.defaultSettings[key]
-    return fallback
+    return SettingsLib.pickSetting(pluginApi, key, fallback)
   }
-
-  function _truncateForToast(s, maxLen) { return Protocol.truncateForToast(s, maxLen) }
 
   function _maybeNotifyResponse(text, isError, opts) {
     var notifyOn = opts && opts.notifyOnResponse !== undefined
@@ -219,7 +159,7 @@ Item {
     }
 
     var title = "OpenClaw Chat"
-    var body = _truncateForToast(text || "", 180)
+    var body = Protocol.truncateForToast(text || "", 180)
     if (!body)
       body = isError ? "Request failed" : "Response received"
 
@@ -560,19 +500,6 @@ Item {
   // Channel / Session API
   // ──────────────────────────────────────────────
 
-  function _channelFromSessionKey(sessionKey) { return Protocol.channelFromSessionKey(sessionKey) }
-
-  function _virtualChannelLabel(channelType) {
-    return _channelLabelMap[channelType]
-      || (channelType.charAt(0).toUpperCase() + channelType.slice(1))
-  }
-
-  function _resolveChannelIcon(channelId) {
-    if (_channelIconMap[channelId])
-      return _channelIconMap[channelId]
-    return "message-circle"
-  }
-
   function fetchChannels() {
     _sendRequest("channels.status", {}, function(res) {
       if (!res.ok)
@@ -595,7 +522,7 @@ Item {
             id: cid,
             label: labels[cid] || cid,
             detailLabel: detailLabels[cid] || "",
-            systemImage: _resolveChannelIcon(cid)
+            systemImage: Channels.resolveChannelIcon(cid)
           })
         }
       }
@@ -617,7 +544,7 @@ Item {
         var virtualMap = {}
         for (var j = 0; j < sessions.length; j++) {
           var s = sessions[j]
-          var ch = s.channel || _channelFromSessionKey(s.key || "")
+          var ch = s.channel || Protocol.channelFromSessionKey(s.key || "")
           if (ch && !configuredIds[ch] && !virtualMap[ch])
             virtualMap[ch] = true
         }
@@ -626,15 +553,15 @@ Item {
         var unified = []
         for (var k = 0; k < configuredMeta.length; k++) {
           var cm = configuredMeta[k]
-          cm.systemImage = _resolveChannelIcon(cm.id)
+          cm.systemImage = Channels.resolveChannelIcon(cm.id)
           unified.push(cm)
         }
         for (var vch in virtualMap) {
           unified.push({
             id: vch,
-            label: _virtualChannelLabel(vch),
+            label: Channels.virtualChannelLabel(vch),
             detailLabel: "",
-            systemImage: _resolveChannelIcon(vch),
+            systemImage: Channels.resolveChannelIcon(vch),
             virtual: true
           })
         }
@@ -692,7 +619,7 @@ Item {
           if (typeof m.content === "string") {
             content = m.content
           } else if (Array.isArray(m.content)) {
-            contentBlocks = _extractContentBlocksJson(m.content)
+            contentBlocks = Protocol.extractContentBlocksJson(m.content)
             var parts = []
             for (var j = 0; j < m.content.length; j++) {
               var block = m.content[j]
@@ -710,21 +637,24 @@ Item {
     }, 15000)
   }
 
-  function _extractContentBlocksJson(contentArray) { return Protocol.extractContentBlocksJson(contentArray) }
-
-  function sendChatWithAttachments(sessionKey, messageText, attachments, contentBlocksJson) {
+  function sendChat(sessionKey, messageText, attachments, contentBlocksJson) {
     if (root.isSending)
       return
     if (!sessionKey) {
-      console.warn("[Claw] sendChatWithAttachments: no sessionKey")
+      console.warn("[Claw] sendChat: no sessionKey")
       return
     }
-    if ((messageText || "").length > 50000) {
+
+    var hasAttachments = attachments && attachments.length > 0
+    var t = (messageText || "").trim()
+    if (!t && !hasAttachments)
+      return
+    if (t.length > 50000) {
       console.warn("[Claw] Message too long, truncating")
-      messageText = messageText.substring(0, 50000)
+      t = t.substring(0, 50000)
     }
 
-    var displayText = messageText || "(image)"
+    var displayText = t || (hasAttachments ? "(image)" : "")
     appendMessage("user", displayText, contentBlocksJson || "")
     appendMessage("assistant", "...")
     root._activeAssistantIndex = messagesModel.count - 1
@@ -734,50 +664,15 @@ Item {
 
     var idempotencyKey = "claw-" + Date.now() + "-" + Math.random().toString(36).substring(2, 10)
 
-    _sendRequest("chat.send", {
+    var params = {
       sessionKey: sessionKey,
-      message: (messageText || "").trim() || " ",
-      idempotencyKey: idempotencyKey,
-      attachments: attachments
-    }, function(res) {
-      if (!res.ok) {
-        var errMsg = (res.error && res.error.message) ? res.error.message : "Send failed"
-        _handleSendError(errMsg)
-      }
-      // On success, streaming events will arrive via chat events
-    }, 300000)
-  }
-
-  function sendChat(sessionKey, messageText) {
-    if (root.isSending)
-      return
-    if (!sessionKey) {
-      console.warn("[Claw] sendChat: no sessionKey")
-      return
-    }
-
-    var t = (messageText || "").trim()
-    if (!t)
-      return
-    if (t.length > 50000) {
-      console.warn("[Claw] Message too long, truncating")
-      t = t.substring(0, 50000)
-    }
-
-    appendMessage("user", t)
-    appendMessage("assistant", "...")
-    root._activeAssistantIndex = messagesModel.count - 1
-    messagesModel.setProperty(root._activeAssistantIndex, "streaming", true)
-    root._activeAssistantText = ""
-    root.isSending = true
-
-    var idempotencyKey = "claw-" + Date.now() + "-" + Math.random().toString(36).substring(2, 10)
-
-    _sendRequest("chat.send", {
-      sessionKey: sessionKey,
-      message: t,
+      message: t || " ",
       idempotencyKey: idempotencyKey
-    }, function(res) {
+    }
+    if (hasAttachments)
+      params.attachments = attachments
+
+    _sendRequest("chat.send", params, function(res) {
       if (!res.ok) {
         var errMsg = (res.error && res.error.message) ? res.error.message : "Send failed"
         _handleSendError(errMsg)
@@ -840,8 +735,6 @@ Item {
   // Chat Event Handling (streaming)
   // ──────────────────────────────────────────────
 
-  function _extractTextFromContent(content) { return Protocol.extractTextFromContent(content) }
-
   function _finishStreaming(index) {
     if (index >= 0 && index < messagesModel.count)
       messagesModel.setProperty(index, "streaming", false)
@@ -864,7 +757,7 @@ Item {
     var sessionKey = payload.sessionKey || ""
     var state = payload.state || ""
     var message = payload.message || {}
-    var text = _extractTextFromContent(message.content)
+    var text = Protocol.extractTextFromContent(message.content)
 
     // Discovery: log extra fields we may not be handling yet
     var extraKeys = Object.keys(payload).filter(function(k) {
@@ -983,6 +876,14 @@ Item {
         appendMessage(m.role || "assistant", m.content || "", m.contentBlocks || "")
       }
     })
+  }
+
+  function navigateToChannels() {
+    root.viewMode = "channels"
+    root.selectedChannelId = ""
+    root.activeSessionKey = ""
+    root.sessionsList = []
+    clearMessages()
   }
 
   function navigateBack() {

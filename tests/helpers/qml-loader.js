@@ -41,14 +41,18 @@ export function loadQmlLib(relPath) {
   }
 
   const ctx = createContext(sandbox)
+
+  // Snapshot built-in keys before running the script so we can distinguish
+  // script-defined symbols from the sandbox builtins.
+  const builtinKeys = new Set(Object.keys(ctx))
+
   new Script(code, { filename: absPath }).runInContext(ctx)
 
-  // Collect all functions from the sandbox (top-level declarations leak into context).
+  // Collect all script-defined symbols (functions and variables).
   const exports = {}
   for (const key of Object.keys(ctx)) {
-    if (typeof ctx[key] === 'function') {
-      exports[key] = ctx[key]
-    }
+    if (builtinKeys.has(key)) continue
+    exports[key] = ctx[key]
   }
 
   return exports

@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import Quickshell
 import qs.Commons
 import qs.Widgets
+import "lib/theme.js" as Theme
 
 Rectangle {
   id: root
@@ -31,17 +32,8 @@ Rectangle {
   border.width: 1
   border.color: Style.capsuleBorderColor
 
-  readonly property color statusIndicatorColor: {
-    if (root.hasUnread)
-      return (Color.mPrimary !== undefined) ? Color.mPrimary : "#2196F3"
-    if (root.connectionState === "connected")
-      return "#4CAF50"
-    if (root.connectionState === "connecting")
-      return "#FFA726"
-    if (root.connectionState === "error")
-      return "#F44336"
-    return Color.mOutline
-  }
+  readonly property color statusIndicatorColor:
+    Theme.connectionStatusColor(root.connectionState, root.hasUnread, Color.mPrimary, Color.mOutline)
 
   RowLayout {
     id: content

@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import QtQuick.Controls
 import qs.Commons
 import qs.Widgets
+import "lib/settings.js" as SettingsLib
 
 ColumnLayout {
   id: root
@@ -21,22 +22,17 @@ ColumnLayout {
   property bool editNotifyOnlyWhenAppInactive: true
 
   function pickSetting(key, fallback) {
-    if (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings[key] !== undefined)
-      return pluginApi.pluginSettings[key]
-    if (pluginApi && pluginApi.manifest && pluginApi.manifest.metadata
-        && pluginApi.manifest.metadata.defaultSettings
-        && pluginApi.manifest.metadata.defaultSettings[key] !== undefined)
-      return pluginApi.manifest.metadata.defaultSettings[key]
-    return fallback
+    return SettingsLib.pickSetting(pluginApi, key, fallback)
   }
 
   function reloadFromSettings() {
-    root.editWsUrl = pickSetting("wsUrl", "ws://127.0.0.1:18789")
-    root.editToken = pickSetting("token", "")
-    root.editAgentId = pickSetting("agentId", "main")
-    root.editAutoReconnect = !!pickSetting("autoReconnect", true)
-    root.editNotifyOnResponse = !!pickSetting("notifyOnResponse", true)
-    root.editNotifyOnlyWhenAppInactive = !!pickSetting("notifyOnlyWhenAppInactive", true)
+    var s = SettingsLib.loadEditableSettings(pluginApi)
+    root.editWsUrl = s.wsUrl
+    root.editToken = s.token
+    root.editAgentId = s.agentId
+    root.editAutoReconnect = s.autoReconnect
+    root.editNotifyOnResponse = s.notifyOnResponse
+    root.editNotifyOnlyWhenAppInactive = s.notifyOnlyWhenAppInactive
   }
 
   onPluginApiChanged: reloadFromSettings()

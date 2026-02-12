@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import qs.Commons
 import qs.Widgets
 import "lib/protocol.js" as Protocol
+import "lib/theme.js" as Theme
 
 Rectangle {
   id: root
@@ -40,11 +41,11 @@ Rectangle {
         height: width
         radius: width / 2
         color: {
-          if (root.activityState === "streaming") return "#4FC3F7"
-          if (root.activityState === "thinking") return "#FFA726"
-          if (root.activityState === "idle") return "#4CAF50"
-          if (root.connectionState === "connecting") return "#FFA726"
-          if (root.connectionState === "error") return "#F44336"
+          if (root.activityState === "streaming") return Theme.statusStreaming
+          if (root.activityState === "thinking") return Theme.statusConnecting
+          if (root.activityState === "idle") return Theme.statusConnected
+          if (root.connectionState === "connecting") return Theme.statusConnecting
+          if (root.connectionState === "error") return Theme.statusError
           return Color.mOutline
         }
 
