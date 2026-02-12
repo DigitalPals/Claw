@@ -93,6 +93,13 @@ Item {
     "tiktok":     "TikTok"
   })
 
+  // Status bar data (populated from server events / discovery)
+  property string activeModel: ""
+  property string activeThinkLevel: ""
+  property int tokenUsed: 0
+  property int tokenLimit: 0
+  readonly property string activityState: Protocol.computeActivityState(root.connectionState, root.isStreaming, root.isSending)
+
   // Streaming state
   property int _activeAssistantIndex: -1
   property string _activeAssistantText: ""
@@ -286,8 +293,23 @@ Item {
     repeat: true
     running: false
     onTriggered: {
-      if (root.connectionState === "connected")
+      if (root.connectionState === "connected") {
         root.fetchChannels()
+        if (root.activeSessionKey)
+          root._fetchSessionStatus(root.activeSessionKey)
+      }
+    }
+  }
+
+  // Delayed status refresh after chat completion
+  Timer {
+    id: statusRefreshTimer
+    interval: 800
+    repeat: false
+    property string _sessionKey: ""
+    onTriggered: {
+      if (root.connectionState === "connected" && _sessionKey)
+        root._fetchSessionStatus(_sessionKey)
     }
   }
 
@@ -416,6 +438,8 @@ Item {
       root._sendConnect(p.nonce || "", p.ts || 0)
     } else if (event === "chat") {
       root._handleChatEvent(frame.payload || {})
+    } else {
+      console.log("[Claw] Unknown event:", event, "payload:", JSON.stringify(frame.payload || {}).substring(0, 500))
     }
   }
 
@@ -454,6 +478,7 @@ Item {
       console.log("[Claw] connect response:", JSON.stringify(res).substring(0, 300))
       if (res.ok) {
         var payload = res.payload || {}
+        console.log("[Claw] connect payload keys:", JSON.stringify(Object.keys(payload)), "full:", JSON.stringify(payload).substring(0, 800))
         // Extract tick interval from policy
         if (payload.policy && payload.policy.tickIntervalMs)
           root._tickIntervalMs = payload.policy.tickIntervalMs
@@ -493,6 +518,10 @@ Item {
     root.isSending = false
     root._activeAssistantIndex = -1
     root._activeAssistantText = ""
+    root.activeModel = ""
+    root.activeThinkLevel = ""
+    root.tokenUsed = 0
+    root.tokenLimit = 0
 
     var autoReconnect = !!_pickSetting("autoReconnect", true)
     if (autoReconnect && ws.active) {
@@ -578,6 +607,7 @@ Item {
           sessions = (sessRes.payload || {}).sessions || []
         root.allSessions = sessions
 
+        // Extract default model info from sessions.list response
         // Build set of configured channel IDs
         var configuredIds = {}
         for (var ci = 0; ci < configuredMeta.length; ci++)
@@ -763,6 +793,50 @@ Item {
   }
 
   // ──────────────────────────────────────────────
+  // Session Status
+  // ──────────────────────────────────────────────
+
+  function _fetchSessionStatus(sessionKey) {
+    _sendRequest("status", { sessionKey: sessionKey }, function(res) {
+      console.log("[Claw] status response:", JSON.stringify(res).substring(0, 800))
+      if (!res.ok || !res.payload)
+        return
+      // Only update if still viewing this session
+      if (root.activeSessionKey !== sessionKey)
+        return
+      // Find this session in payload.sessions.recent[]
+      var sessions = (res.payload.sessions || {}).recent || []
+      var s = null
+      for (var i = 0; i < sessions.length; i++) {
+        if (sessions[i].key === sessionKey) {
+          s = sessions[i]
+          break
+        }
+      }
+      // Check queuedSystemEvents for pending model changes (applied on next chat run)
+      var queued = res.payload.queuedSystemEvents || []
+      var pendingModel = ""
+      for (var qi = 0; qi < queued.length; qi++) {
+        var parsed = Protocol.parseModelFromResponse(queued[qi])
+        if (parsed) pendingModel = parsed
+      }
+
+      if (pendingModel)
+        root.activeModel = pendingModel
+      else if (s && s.model)
+        root.activeModel = s.model
+      if (s) {
+        if (s.thinkLevel)
+          root.activeThinkLevel = s.thinkLevel
+        if (typeof s.contextTokens === "number")
+          root.tokenLimit = s.contextTokens
+        if (typeof s.totalTokens === "number")
+          root.tokenUsed = s.totalTokens
+      }
+    }, 10000)
+  }
+
+  // ──────────────────────────────────────────────
   // Chat Event Handling (streaming)
   // ──────────────────────────────────────────────
 
@@ -792,6 +866,26 @@ Item {
     var message = payload.message || {}
     var text = _extractTextFromContent(message.content)
 
+    // Discovery: log extra fields we may not be handling yet
+    var extraKeys = Object.keys(payload).filter(function(k) {
+      return k !== "sessionKey" && k !== "state" && k !== "message"
+    })
+    if (extraKeys.length > 0)
+      console.log("[Claw] chat event extra keys:", JSON.stringify(extraKeys), "values:", JSON.stringify(payload).substring(0, 500))
+
+    // Extract model/usage/thinkLevel if server provides them
+    if (payload.model && sessionKey === root.activeSessionKey)
+      root.activeModel = payload.model
+    if (payload.thinkLevel && sessionKey === root.activeSessionKey)
+      root.activeThinkLevel = payload.thinkLevel
+    if (payload.usage && sessionKey === root.activeSessionKey) {
+      if (typeof payload.usage.tokensUsed === "number") root.tokenUsed = payload.usage.tokensUsed
+      if (typeof payload.usage.tokenLimit === "number") root.tokenLimit = payload.usage.tokenLimit
+      // Alternative field names
+      if (typeof payload.usage.used === "number") root.tokenUsed = payload.usage.used
+      if (typeof payload.usage.limit === "number") root.tokenLimit = payload.usage.limit
+    }
+
     // Active session: handle streaming UI as before
     if (sessionKey === root.activeSessionKey) {
       if (state === "delta") {
@@ -812,6 +906,11 @@ Item {
         }
         _maybeNotifyResponse(finalText, false)
         _endStreaming()
+        // Refresh status for model/token updates
+        var sk = sessionKey
+        statusRefreshTimer.stop()
+        statusRefreshTimer._sessionKey = sk
+        statusRefreshTimer.start()
       } else if (state === "aborted") {
         if (root._activeAssistantIndex >= 0) {
           _finishStreaming(root._activeAssistantIndex)
@@ -869,6 +968,10 @@ Item {
     _clearSessionUnread(sessionKey)
     root._activeAssistantIndex = -1
     root._activeAssistantText = ""
+    root.activeThinkLevel = ""
+    root.tokenUsed = 0
+    root.tokenLimit = 0
+    _fetchSessionStatus(sessionKey)
 
     fetchHistory(sessionKey, function(messages) {
       // Discard if user navigated away during fetch

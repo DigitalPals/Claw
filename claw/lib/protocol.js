@@ -106,6 +106,34 @@ function clearChannelSessions(currentUnread, channelId) {
   return changed ? fresh : currentUnread
 }
 
+function formatTokenUsage(used, limit) {
+  if (!used && !limit)
+    return ""
+  function fmt(n) {
+    if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, "") + "M"
+    if (n >= 1000) return Math.round(n / 1000) + "k"
+    return String(n)
+  }
+  if (!limit)
+    return fmt(used)
+  var pct = Math.round(used / limit * 100)
+  return fmt(used) + "/" + fmt(limit) + " (" + pct + "%)"
+}
+
+// Extract model id from server response text like "Model set to opus (anthropic/claude-opus-4-6)."
+function parseModelFromResponse(text) {
+  if (!text) return ""
+  var m = text.match(/\bModel (?:set|switched) to \S+ \(([^)]+)\)/)
+  return m ? m[1] : ""
+}
+
+function computeActivityState(connectionState, isStreaming, isSending) {
+  if (connectionState !== "connected") return "disconnected"
+  if (isStreaming) return "streaming"
+  if (isSending) return "thinking"
+  return "idle"
+}
+
 function filterSessionsForChannel(allSessions, channelId) {
   var filtered = []
   for (var i = 0; i < allSessions.length; i++) {

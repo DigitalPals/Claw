@@ -130,6 +130,31 @@ describe('extractContentBlocksJson', () => {
 })
 
 // ---------------------------------------------------------------------------
+// parseModelFromResponse
+// ---------------------------------------------------------------------------
+describe('parseModelFromResponse', () => {
+  it('extracts model from "Model set to" response', () => {
+    expect(P.parseModelFromResponse('Model set to opus (anthropic/claude-opus-4-6).')).toBe('anthropic/claude-opus-4-6')
+  })
+
+  it('extracts model from "Model switched to" response', () => {
+    expect(P.parseModelFromResponse('Model switched to opus (anthropic/claude-opus-4-6).')).toBe('anthropic/claude-opus-4-6')
+  })
+
+  it('returns empty string for unrelated text', () => {
+    expect(P.parseModelFromResponse('Hello world')).toBe('')
+  })
+
+  it('returns empty string for empty input', () => {
+    expect(P.parseModelFromResponse('')).toBe('')
+  })
+
+  it('returns empty string for null', () => {
+    expect(P.parseModelFromResponse(null)).toBe('')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // truncateForToast
 // ---------------------------------------------------------------------------
 describe('truncateForToast', () => {
@@ -301,6 +326,70 @@ describe('clearChannelSessions', () => {
       'agent:main:main:s1',
       'agent:main:webchat:s1',
     ])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// formatTokenUsage
+// ---------------------------------------------------------------------------
+describe('formatTokenUsage', () => {
+  it('returns empty string when both used and limit are zero', () => {
+    expect(P.formatTokenUsage(0, 0)).toBe('')
+  })
+
+  it('returns empty string when both are falsy', () => {
+    expect(P.formatTokenUsage(null, undefined)).toBe('')
+  })
+
+  it('formats small numbers without suffix', () => {
+    expect(P.formatTokenUsage(500, 0)).toBe('500')
+  })
+
+  it('formats thousands with k suffix', () => {
+    expect(P.formatTokenUsage(79000, 200000)).toBe('79k/200k (40%)')
+  })
+
+  it('formats millions with M suffix', () => {
+    expect(P.formatTokenUsage(1500000, 2000000)).toBe('1.5M/2M (75%)')
+  })
+
+  it('returns just used when limit is zero', () => {
+    expect(P.formatTokenUsage(5000, 0)).toBe('5k')
+  })
+
+  it('rounds percentage to nearest integer', () => {
+    expect(P.formatTokenUsage(1, 3)).toBe('1/3 (33%)')
+  })
+
+  it('handles used equal to limit', () => {
+    expect(P.formatTokenUsage(200000, 200000)).toBe('200k/200k (100%)')
+  })
+
+  it('drops .0 from M suffix', () => {
+    expect(P.formatTokenUsage(2000000, 0)).toBe('2M')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// computeActivityState
+// ---------------------------------------------------------------------------
+describe('computeActivityState', () => {
+  it('returns disconnected when not connected', () => {
+    expect(P.computeActivityState('idle', false, false)).toBe('disconnected')
+    expect(P.computeActivityState('connecting', false, false)).toBe('disconnected')
+    expect(P.computeActivityState('error', false, false)).toBe('disconnected')
+  })
+
+  it('returns streaming when connected and streaming', () => {
+    expect(P.computeActivityState('connected', true, true)).toBe('streaming')
+  })
+
+  it('returns thinking when connected and sending but not streaming', () => {
+    expect(P.computeActivityState('connected', false, true)).toBe('thinking')
+  })
+
+  it('returns idle when connected and neither streaming nor sending', () => {
+    expect(P.computeActivityState('connected', false, false)).toBe('idle')
   })
 })
 

@@ -632,6 +632,18 @@ Item {
         }
       }
 
+      // Status bar (only in chat/session view)
+      StatusBar {
+        Layout.fillWidth: true
+        visible: root.viewMode === "chat"
+        connectionState: root.connectionState
+        activityState: main ? (main.activityState || "disconnected") : "disconnected"
+        activeModel: main ? (main.activeModel || "") : ""
+        activeThinkLevel: main ? (main.activeThinkLevel || "") : ""
+        tokenUsed: main ? (main.tokenUsed || 0) : 0
+        tokenLimit: main ? (main.tokenLimit || 0) : 0
+      }
+
       // Settings (collapsible)
       Rectangle {
         Layout.fillWidth: true
