@@ -899,7 +899,8 @@ Item {
         root._activeAssistantText = text
         setMessageContent(root._activeAssistantIndex, text || "...")
       } else if (state === "final") {
-        var finalText = root._activeAssistantText || text
+        var finalText = root._activeAssistantText || ""
+        if (text.length > finalText.length) finalText = text
         if (root._activeAssistantIndex >= 0) {
           _finishStreaming(root._activeAssistantIndex)
           setMessageContent(root._activeAssistantIndex, finalText || "(empty response)")
